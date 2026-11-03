@@ -109,6 +109,7 @@ class HistoryManager:
                     model=self.llm.config.model_default,
                     max_tokens=600,
                     purpose="summary",
+                    thinking="disabled",
                 )
             except (BudgetExceeded, LLMError) as exc:
                 log.warning("頻道 %s 摘要失敗：%s", channel_id, type(exc).__name__)

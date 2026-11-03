@@ -6,12 +6,12 @@ from bot.llm import LLMClient
 from bot.main import TsundereBot
 from bot.persona import Persona
 
-from .conftest import make_config
+from .conftest import TAIPEI, make_config
 
 
 async def test_bot_constructs_with_commands_and_safe_mentions(storage, fake_openai, persona_file):
     config = make_config()
-    llm = LLMClient(config, storage, client=fake_openai, now=lambda: datetime(2026, 11, 3))
+    llm = LLMClient(config, storage, client=fake_openai, now=lambda: datetime(2026, 11, 3, tzinfo=TAIPEI))
     bot = TsundereBot(config, storage, llm, Persona(persona_file))
     try:
         names = {c.name for c in bot.tree.get_commands()}

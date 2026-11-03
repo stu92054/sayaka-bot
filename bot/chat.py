@@ -88,10 +88,11 @@ class ChatService:
         return await self.generate(channel_id, prompt, trigger, model=self.config.model_default)
 
     async def generate(self, channel_id: int, prompt: list[dict[str, str]], trigger: Trigger,
-                       *, model: str, purpose: str = "chat") -> Reply:
+                       *, model: str, purpose: str = "chat", max_tokens: int | None = None,
+                       thinking: str | None = None) -> Reply:
         try:
-            text = await self.llm.chat(prompt, model=model, max_tokens=self.config.max_reply_tokens,
-                                       purpose=purpose)
+            text = await self.llm.chat(prompt, model=model, max_tokens=max_tokens or self.config.max_reply_tokens,
+                                       purpose=purpose, thinking=thinking)
         except BudgetExceeded:
             return Reply([BUDGET_EXCEEDED_REPLY], trigger, recorded=False)
         except LLMError:
@@ -104,8 +105,10 @@ class ChatService:
     async def deep(self, channel_id: int, author: str, question: str) -> Reply:
         prompt = self.history.build_prompt(channel_id, self.persona.text, author, question)
         self.history.add(channel_id, author, question)
+        # 思考模式的推理內容也算在 max_tokens 內，所以 /deep 給較大的上限
         return await self.generate(channel_id, prompt, Trigger.MENTION, model=self.config.model_deep,
-                                   purpose="deep")
+                                   purpose="deep", max_tokens=self.config.deep_max_tokens,
+                                   thinking=self.config.thinking_deep)
 
     async def _worth_interjecting(self, prompt: list[dict[str, str]] | None) -> bool:
         if not prompt:
@@ -123,6 +126,7 @@ class ChatService:
                 max_tokens=5,
                 purpose="interject_judge",
                 temperature=0,
+                thinking="disabled",  # 只要一個字，不能讓推理吃掉 max_tokens
             )
         except (BudgetExceeded, LLMError):
             return False

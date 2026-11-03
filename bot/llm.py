@@ -47,6 +47,9 @@ class LLMClient:
         tz = ZoneInfo(config.timezone)
         self._now = now or (lambda: datetime.now(tz))
 
+    def now(self) -> datetime:
+        return self._now()
+
     def today(self) -> str:
         return self._now().strftime("%Y-%m-%d")
 
@@ -60,12 +63,13 @@ class LLMClient:
         return self.storage.usage_by_model(self.today())
 
     def estimate_cost(self, rows: list[UsageRow]) -> float:
-        total = 0.0
-        for r in rows:
-            p = self.config.price_for(r.model)
-            total += (r.cache_hit_tokens * p.cache_hit + r.cache_miss_tokens * p.cache_miss
-                      + r.completion_tokens * p.output) / 1_000_000
-        return total
+        """今日預估費用（元）。每次呼叫時已依高峰／空閒時段算好並存入資料庫。"""
+        return sum(r.cost for r in rows)
+
+    def thinking_for(self, model: str) -> str:
+        if model == self.config.model_deep and model != self.config.model_default:
+            return self.config.thinking_deep
+        return self.config.thinking_default
 
     async def chat(
         self,
@@ -75,6 +79,7 @@ class LLMClient:
         max_tokens: int | None = None,
         purpose: str = "chat",
         temperature: float | None = None,
+        thinking: str | None = None,
     ) -> str:
         if self.over_budget():
             raise BudgetExceeded()
@@ -84,7 +89,11 @@ class LLMClient:
             "messages": messages,
             "max_tokens": max_tokens or self.config.max_reply_tokens,
         }
-        if temperature is not None:
+        thinking = thinking or self.thinking_for(model)
+        if thinking != "omit":
+            kwargs["extra_body"] = {"thinking": {"type": thinking}}
+        # 思考模式不支援 temperature 等取樣參數
+        if temperature is not None and thinking == "disabled":
             kwargs["temperature"] = temperature
 
         last_exc: Exception | None = None
@@ -114,5 +123,9 @@ class LLMClient:
         hit = int(getattr(usage, "prompt_cache_hit_tokens", 0) or 0)
         miss = getattr(usage, "prompt_cache_miss_tokens", None)
         miss = int(miss) if miss is not None else max(prompt - hit, 0)
-        self.storage.record_usage(self.today(), model, purpose, prompt, completion, hit, miss)
-        log.info("用量 %s/%s：in=%d (hit=%d) out=%d", model, purpose, prompt, hit, completion)
+        now = self._now()
+        peak = self.config.is_peak(now)
+        cost = self.config.call_cost(model, hit, miss, completion, now)
+        self.storage.record_usage(self.today(), model, purpose, prompt, completion, hit, miss, cost=cost, peak=peak)
+        log.info("用量 %s/%s：in=%d (hit=%d) out=%d ¥%.5f%s", model, purpose, prompt, hit, completion, cost,
+                 "（高峰）" if peak else "")

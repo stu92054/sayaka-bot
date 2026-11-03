@@ -10,7 +10,7 @@ async def test_mention_gets_reply_and_both_sides_recorded(make_service, fake_ope
     assert reply.trigger is Trigger.NAME
     assert reply.chunks == [fake_openai.completions.default]
     call = fake_openai.completions.calls[0]
-    assert call["model"] == "deepseek-v4-flash"
+    assert call["model"] == "deepseek-flash"
     assert call["max_tokens"] == 600
     assert call["messages"][0] == {"role": "system", "content": "你是傲嬌大小姐。"}
     assert call["messages"][-1] == {"role": "user", "content": "KO: 大小姐早安"}
@@ -48,7 +48,7 @@ async def test_cooldown_blocks_second_trigger(make_service, fake_openai, clock):
 
 async def test_budget_exceeded_returns_fixed_message(make_service, fake_openai, storage):
     svc = make_service(daily_token_budget=50)
-    storage.record_usage(svc.llm.today(), "deepseek-v4-flash", "chat", 50, 0, 0, 50)
+    storage.record_usage(svc.llm.today(), "deepseek-flash", "chat", 50, 0, 0, 50)
     reply = await svc.handle_message(make_message("大小姐"), BOT_ID)
     assert reply.chunks == [BUDGET_EXCEEDED_REPLY]
     assert not reply.recorded
@@ -93,6 +93,7 @@ async def test_interject_judge_no(make_service, fake_openai):
     assert await svc.handle_message(make_message("今天好累"), BOT_ID) is None
     assert len(fake_openai.completions.calls) == 1
     assert fake_openai.completions.calls[0]["max_tokens"] == 5
+    assert fake_openai.completions.calls[0]["extra_body"] == {"thinking": {"type": "disabled"}}
     # 判斷為否不消耗冷卻
     assert svc.cooldown.remaining(1) == 0
 
@@ -102,7 +103,7 @@ async def test_interject_judge_yes(make_service, fake_openai):
     fake_openai.completions.replies = ["是", "插嘴內容"]
     reply = await svc.handle_message(make_message("今天好累"), BOT_ID)
     assert reply.trigger is Trigger.INTERJECT and reply.chunks == ["插嘴內容"]
-    assert [c["model"] for c in fake_openai.completions.calls] == ["deepseek-v4-flash", "deepseek-v4-flash"]
+    assert [c["model"] for c in fake_openai.completions.calls] == ["deepseek-flash", "deepseek-flash"]
 
 
 async def test_deep_uses_deep_model(make_service, fake_openai, storage):

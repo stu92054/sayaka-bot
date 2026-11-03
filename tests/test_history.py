@@ -51,7 +51,7 @@ async def test_history_trim_and_summary_trigger(make_service, fake_openai, stora
     assert await hist.maybe_summarize(CH) is True
 
     call = fake_openai.completions.calls[-1]
-    assert call["model"] == "deepseek-v4-flash"
+    assert call["model"] == "deepseek-flash"
     # 7 則壓到剩 3 則（上限的一半），最舊的 4 則進摘要
     assert "msg0" in call["messages"][1]["content"] and "msg3" in call["messages"][1]["content"]
     assert "msg4" not in call["messages"][1]["content"]

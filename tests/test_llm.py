@@ -1,4 +1,10 @@
+from datetime import datetime
+
 import pytest
+
+from bot.storage import Storage
+
+from .conftest import TAIPEI
 
 from bot.llm import BudgetExceeded, LLMError
 
@@ -46,8 +52,77 @@ async def test_budget_counts_only_today(make_service, fake_openai, storage):
     assert len(fake_openai.completions.calls) == 1
 
 
-def test_estimate_cost(make_service, storage):
+async def test_cost_offpeak_is_half(make_service, fake_openai):
+    fake_openai.completions.usage = dict(prompt_tokens=2_000_000, completion_tokens=1_000_000,
+                                         prompt_cache_hit_tokens=1_000_000, prompt_cache_miss_tokens=1_000_000)
+    svc = make_service()  # 週二 12:30 → 空閒
+    await svc.llm.chat([{"role": "user", "content": "hi"}])
+    # flash 高峰：命中 0.04 + 未命中 2 + 輸出 8 = 10.04 元，空閒減半
+    assert svc.llm.estimate_cost(svc.llm.usage_today()) == pytest.approx(5.02)
+
+
+async def test_cost_peak_full_price_for_pro(make_service, fake_openai):
+    fake_openai.completions.usage = dict(prompt_tokens=1_000_000, completion_tokens=1_000_000,
+                                         prompt_cache_hit_tokens=0, prompt_cache_miss_tokens=1_000_000)
+    svc = make_service(now=datetime(2026, 11, 3, 10, 0, tzinfo=TAIPEI))  # 週二 10:00 → 高峰
+    await svc.llm.chat([{"role": "user", "content": "hi"}], model="deepseek-v4-pro")
+    assert svc.llm.estimate_cost(svc.llm.usage_today()) == pytest.approx(9.0 + 27.0)
+
+
+def test_peak_hours(make_service):
+    cfg = make_service().config
+    bj = lambda *a: datetime(*a, tzinfo=TAIPEI)  # 台北與北京同為 UTC+8
+    assert cfg.is_peak(bj(2026, 11, 3, 9, 0))
+    assert cfg.is_peak(bj(2026, 11, 3, 11, 59))
+    assert not cfg.is_peak(bj(2026, 11, 3, 12, 0))
+    assert cfg.is_peak(bj(2026, 11, 3, 14, 0))
+    assert not cfg.is_peak(bj(2026, 11, 3, 18, 0))
+    assert not cfg.is_peak(bj(2026, 11, 7, 10, 0))  # 週六
+    assert not cfg.is_peak(bj(2026, 11, 3, 8, 59))
+
+
+def test_holidays_are_offpeak():
+    from datetime import date
+    from .conftest import make_config
+    cfg = make_config(cn_holidays=frozenset({date(2026, 10, 1)}))
+    assert not cfg.is_peak(datetime(2026, 10, 1, 10, 0, tzinfo=TAIPEI))
+
+
+def test_legacy_flash_name_uses_flash_price():
+    from .conftest import make_config
+    cfg = make_config()
+    assert cfg.price_for("deepseek-v4-flash") == cfg.price_for("deepseek-flash")
+
+
+async def test_thinking_disabled_for_chat_enabled_for_deep(make_service, fake_openai):
     svc = make_service()
-    storage.record_usage(svc.llm.today(), "deepseek-v4-flash", "chat", 2_000_000, 1_000_000, 1_000_000, 1_000_000)
-    p = svc.config.price_for("deepseek-v4-flash")
-    assert svc.llm.estimate_cost(svc.llm.usage_today()) == pytest.approx(p.cache_hit + p.cache_miss + p.output)
+    await svc.llm.chat([{"role": "user", "content": "hi"}], temperature=0)
+    call = fake_openai.completions.calls[-1]
+    assert call["extra_body"] == {"thinking": {"type": "disabled"}}
+    assert call["temperature"] == 0
+    await svc.deep(500, "KO", "難題")
+    call = fake_openai.completions.calls[-1]
+    assert call["model"] == "deepseek-v4-pro"
+    assert call["extra_body"] == {"thinking": {"type": "enabled"}}
+    assert call["max_tokens"] == 8000
+    assert "temperature" not in call
+
+
+async def test_thinking_omit_sends_no_extra_body(make_service, fake_openai):
+    svc = make_service(thinking_default="omit")
+    await svc.llm.chat([{"role": "user", "content": "hi"}])
+    assert "extra_body" not in fake_openai.completions.calls[-1]
+
+
+def test_storage_migrates_old_usage_table(tmp_path):
+    import sqlite3
+    db = tmp_path / "old.sqlite3"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE usage (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, created_at REAL NOT NULL, "
+                 "model TEXT NOT NULL, purpose TEXT NOT NULL, prompt_tokens INTEGER NOT NULL, completion_tokens INTEGER "
+                 "NOT NULL, cache_hit_tokens INTEGER NOT NULL, cache_miss_tokens INTEGER NOT NULL)")
+    conn.commit(); conn.close()
+    s = Storage(db)
+    s.record_usage("2026-11-03", "deepseek-flash", "chat", 1, 1, 0, 1, cost=0.5)
+    assert s.usage_by_model("2026-11-03")[0].cost == 0.5
+    s.close()

@@ -11,7 +11,7 @@
 - **脈絡**：每個頻道保留最近 `HISTORY_MAX_MESSAGES` 則訊息（包含別人之間的對話，格式 `KO: 今天好累`）。
   超過上限時，較舊的訊息會被 flash 模型壓成摘要（一次壓到剩一半上限，以減少摘要次數）。
 - **Prompt 順序固定**：`persona.md` 全文 → 頻道摘要 → 近期訊息 → 當前訊息，persona 永遠在最前面，有利 DeepSeek 前綴快取。
-- **成本控管**：每次呼叫記錄 input / output / cache-hit tokens；超過 `DAILY_TOKEN_BUDGET` 就只回固定訊息。
+- **成本控管**：每次呼叫記錄 input / output / cache-hit tokens；超過 `DAILY_TOKEN_BUDGET` 就只回固定訊息；`/usage` 依高峰／空閒時段估算人民幣費用。
 - **安全**：不允許 @everyone / @here / 角色提及；回覆超過 2000 字元自動分段；API 錯誤指數退避重試（最多 3 次）；
   log 中的 token / API key 會被遮蔽。
 
@@ -19,7 +19,7 @@
 
 | 指令 | 說明 | 權限 |
 | --- | --- | --- |
-| `/deep <問題>` | 用 `MODEL_DEEP`（預設 `deepseek-v4-pro`）回答 | 所有人 |
+| `/deep <問題>` | 用 `MODEL_DEEP`（預設 `deepseek-v4-pro`，開啟思考模式）回答 | 所有人 |
 | `/reset` | 清除本頻道歷史與摘要 | 管理員 |
 | `/persona_reload` | 重新讀取 `persona.md` | 管理員 |
 | `/usage` | 今日 token 用量與預估費用 | 管理員 |
@@ -77,8 +77,11 @@ cp .env.example .env
 | `ALLOWED_GUILD_IDS` | — | 逗號分隔，只在這些伺服器運作 |
 | `ADMIN_USER_IDS` | — | 可用管理指令的使用者 |
 | `BOT_NAMES` | `大小姐` | 訊息出現這些名字就會觸發（逗號分隔，不分大小寫） |
-| `MODEL_DEFAULT` | `deepseek-v4-flash` | 一般對話、摘要、插話判斷 |
+| `MODEL_DEFAULT` | `deepseek-flash` | 一般對話、摘要、插話判斷（舊名 `deepseek-v4-flash` 仍可用） |
 | `MODEL_DEEP` | `deepseek-v4-pro` | `/deep` 使用 |
+| `THINKING_DEFAULT` | `disabled` | 一般對話的思考模式：`enabled` / `disabled` / `omit`（不送參數） |
+| `THINKING_DEEP` | `enabled` | `/deep` 的思考模式 |
+| `DEEP_MAX_TOKENS` | `8000` | `/deep` 的 max_tokens（推理內容也算在內） |
 | `HISTORY_MAX_MESSAGES` | `30` | 每頻道保留的近期訊息數 |
 | `DAILY_TOKEN_BUDGET` | `2000000` | 每日 token 上限（input + output） |
 | `USER_COOLDOWN_SECONDS` | `5` | 同一使用者觸發的冷卻秒數 |
@@ -88,7 +91,26 @@ cp .env.example .env
 | `DB_PATH` | `data/bot.sqlite3` | SQLite 檔路徑 |
 | `BOT_TIMEZONE` | `Asia/Taipei` | 計算「今日」用量的時區 |
 | `LOG_LEVEL` | `INFO` | log 等級 |
-| `PRICE_TABLE` | 內建 | 覆寫價目表，格式 `model:命中:未命中:輸出;...`（USD / 百萬 tokens） |
+| `PRICE_TABLE` | 內建 | 覆寫高峰時段價目表，格式 `model:命中:未命中:輸出;...`（元 / 百萬 tokens） |
+| `PRICE_OFFPEAK_RATIO` | `0.5` | 空閒時段價格比例 |
+| `CN_HOLIDAYS` | — | 中國法定節假日（整天算空閒時段），逗號分隔 `YYYY-MM-DD` |
+
+### 費用估算
+
+`/usage` 的費用依 DeepSeek 官方價目表（人民幣），**每次呼叫當下**判斷高峰／空閒時段後計算並存進 SQLite：
+
+| 模型 | 輸入（快取命中） | 輸入（未命中） | 輸出 |
+| --- | --- | --- | --- |
+| `deepseek-flash` | 0.04 元 | 2 元 | 8 元 |
+| `deepseek-v4-pro` | 0.30 元 | 9 元 | 27 元 |
+
+以上是高峰時段每百萬 tokens 的價格；空閒時段減半。高峰時段為北京時間週一至週五 9:00–12:00、14:00–18:00，
+週末與中國法定節假日全天算空閒。法定節假日無法自動判斷，請用 `CN_HOLIDAYS` 設定。
+
+### 思考模式
+
+兩個模型預設都開啟思考模式。一般聊天、摘要、插話判斷都會送出 `thinking: {"type": "disabled"}` 關閉思考，
+以節省 token、降低延遲；`/deep` 則開啟思考，並使用較大的 `DEEP_MAX_TOKENS`。
 
 ## 4. 執行方式
 

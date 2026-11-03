@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from types import SimpleNamespace
 
 import pytest
@@ -14,6 +15,7 @@ from bot.persona import Persona
 from bot.storage import Storage
 from bot.triggers import Cooldown
 
+TAIPEI = ZoneInfo("Asia/Taipei")
 GUILD_ID = 111
 OTHER_GUILD_ID = 999
 BOT_ID = 42
@@ -120,15 +122,16 @@ def clock():
 
 @pytest.fixture
 def make_service(storage, fake_openai, persona_file, clock):
-    def factory(**overrides):
+    def factory(now=None, **overrides):
+        overrides_now = now
         config = make_config(**overrides)
         sleeps: list[float] = []
 
         async def fake_sleep(d):
             sleeps.append(d)
 
-        llm = LLMClient(config, storage, client=fake_openai, sleep=fake_sleep,
-                        now=lambda: datetime(2026, 11, 3, 12, 0))
+        when = overrides_now or datetime(2026, 11, 3, 12, 30, tzinfo=TAIPEI)  # 週二午休：空閒時段
+        llm = LLMClient(config, storage, client=fake_openai, sleep=fake_sleep, now=lambda: when)
         llm.sleeps = sleeps
         history = HistoryManager(storage, llm, config.history_max_messages)
         persona = Persona(persona_file)
