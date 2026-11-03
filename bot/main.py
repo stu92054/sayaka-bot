@@ -74,7 +74,7 @@ class PersonaBot(discord.Client):
         self.persona = persona
         self.replies = replies or Replies()
         self.lore = lore
-        self.history = HistoryManager(storage, llm, config.history_max_messages)
+        self.history = HistoryManager(storage, llm, config.history_max_messages, config.history_timestamps)
         self.chat = ChatService(config, llm, self.history, persona, Cooldown(config.user_cooldown_seconds),
                                 replies=self.replies, lore=lore)
         self.tree = app_commands.CommandTree(self)

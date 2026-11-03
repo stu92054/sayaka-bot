@@ -16,8 +16,12 @@
 - **一律忽略**：其他 bot、不在 `ALLOWED_GUILD_IDS` 的伺服器、冷卻時間內的同一使用者。
 - **脈絡**：每個頻道保留最近 `HISTORY_MAX_MESSAGES` 則訊息（包含別人之間的對話，格式 `KO: 今天好累`）。
   超過上限時，較舊的訊息會被 flash 模型壓成摘要（一次壓到剩一半上限，以減少摘要次數）。
+- **時間感知**：最後一則訊息前附上現在時間（例如 `（現在時間：2026-11-03（週二）23:40，台灣時間）`），
+  對話紀錄的每行使用者訊息加上發言時間（例如 `[11/02 21:03] KO: 今天的 live 好棒`），
+  她因此能回答現在幾點、今天星期幾，也分得出「剛剛」和「昨天」。她自己的回覆不加時間，以免模型學著在回覆前加時間。
 - **Prompt 順序固定**：原作資料（`lore/`）→ `persona.md` 全文 → 頻道摘要 → 近期訊息 → 當前訊息。
-  最前面兩段內容固定不變，有利 DeepSeek 前綴快取。
+  最前面兩段內容固定不變，有利 DeepSeek 前綴快取。現在時間每分鐘都會變，所以只放在最後一則訊息；
+  已存訊息的發言時間固定含日期、格式不會變，也不影響快取。
 - **成本控管**：每次呼叫記錄 input / output / cache-hit tokens 與費用；今日費用超過 `DAILY_COST_BUDGET` 就只回固定訊息；
   `/usage` 依高峰／空閒時段估算費用（幣別依 `PRICE_CURRENCY`，預設美元）。
 - **安全**：bot 送出的所有訊息都不允許任何提及（@everyone / @here / 角色 / 使用者），避免模型照著使用者要求或引用原文替人 ping 人；
@@ -95,6 +99,8 @@ cp .env.example .env
 | `REASONING_EFFORT_DEEP` | `high` | `/deep` 的思考強度 |
 | `DEEP_MAX_TOKENS` | `8000` | `/deep` 的 max_tokens（推理 tokens 也算在 completion 內） |
 | `HISTORY_MAX_MESSAGES` | `30` | 每頻道保留的近期訊息數 |
+| `SHOW_CURRENT_TIME` | `true` | 在最後一則訊息前附上現在時間 |
+| `HISTORY_TIMESTAMPS` | `true` | 對話紀錄與摘要的每行使用者訊息加上發言時間（每則約多幾個 token） |
 | `DAILY_COST_BUDGET` | `1` | 每日費用上限（幣別同 `PRICE_CURRENCY`，依記錄的費用加總）；`0` = 不限制 |
 | `PRICE_CURRENCY` | `USD` | 計價幣別，依 DeepSeek 帳戶設定：`USD`（英文版價目表）或 `CNY`（中文版價目表） |
 | `DAILY_TOKEN_BUDGET` | `0` | 每日 token 上限（輸入＋輸出，含命中快取的部分），選填；`0` = 不限制 |
@@ -105,7 +111,7 @@ cp .env.example .env
 | `PERSONA_PATH` | `persona.md` | 人設檔路徑 |
 | `REPLIES_PATH` | `replies.toml` | 固定訊息與指令說明的檔案路徑 |
 | `DB_PATH` | `data/bot.sqlite3` | SQLite 檔路徑 |
-| `BOT_TIMEZONE` | `Asia/Taipei` | 計算「今日」用量的時區 |
+| `BOT_TIMEZONE` | `Asia/Taipei` | 計算「今日」用量，以及告訴她現在時間、發言時間所用的時區 |
 | `LOG_LEVEL` | `INFO` | log 等級 |
 | `PRICE_TABLE` | 內建 | 覆寫高峰時段價格，格式 `model:命中:未命中:輸出;...`（每百萬 tokens，幣別同 `PRICE_CURRENCY`） |
 | `PRICE_OFFPEAK_RATIO` | `0.5` | 空閒時段價格比例 |
