@@ -12,7 +12,7 @@
 ## 功能概要
 
 - **觸發**：被 @mention、有人回覆 bot 的訊息、私訊（限管理員或同伺服器成員）；
-  可選的名字觸發（`BOT_NAMES`，預設關閉）與隨機插話（`RANDOM_INTERJECT_RATE > 0`，插話前會先用 flash 模型判斷值不值得插嘴）。
+  可選的名字觸發（`BOT_NAMES`，預設關閉）與主動插話（預設關閉，見「主動插話」）。
 - **一律忽略**：其他 bot、不在 `ALLOWED_GUILD_IDS` 的伺服器、冷卻時間內的同一使用者。
 - **脈絡**：每個頻道保留最近 `HISTORY_MAX_MESSAGES` 則訊息（包含別人之間的對話，格式 `KO: 今天好累`）。
   超過上限時，較舊的訊息會被 flash 模型壓成摘要（一次壓到剩一半上限，以減少摘要次數）。
@@ -107,7 +107,12 @@ cp .env.example .env
 | `LORE_DIR` | `lore` | 原作資料資料夾；`none` = 不使用 |
 | `USER_COOLDOWN_SECONDS` | `5` | 同一使用者觸發的冷卻秒數 |
 | `MAX_REPLY_TOKENS` | `600` | 每次回覆的最大 tokens |
-| `RANDOM_INTERJECT_RATE` | `0` | 主動插話機率（0～1） |
+| `RANDOM_INTERJECT_RATE` | `0` | 一般訊息進入插話判斷的機率（0～1）；`0` = 不插話 |
+| `INTERJECT_KEYWORDS` | （空） | 聊到這些話題時改用 `INTERJECT_KEYWORD_RATE`（逗號分隔） |
+| `INTERJECT_KEYWORD_RATE` | `0.3` | 聊到指定話題時進入插話判斷的機率 |
+| `INTERJECT_THRESHOLD` | `0.7` | 判斷模型認為「現在插話自然」的機率超過這個門檻才插話 |
+| `INTERJECT_CHANNEL_COOLDOWN_MINUTES` | `10` | 同一頻道在她上次發言後幾分鐘內不插話 |
+| `INTERJECT_MAX_PER_HOUR` | `3` | 每個頻道每小時最多插話幾次；`0` = 不限制 |
 | `PERSONA_PATH` | `persona.md` | 人設檔路徑 |
 | `REPLIES_PATH` | `replies.toml` | 固定訊息與指令說明的檔案路徑 |
 | `DB_PATH` | `data/bot.sqlite3` | SQLite 檔路徑 |
@@ -231,7 +236,7 @@ journalctl -u sayaka-bot -f
 - 目前約 1.3 萬字（約 1 萬 tokens）。因為內容固定在 prompt 最前面，DeepSeek 的前綴快取幾乎每次都會命中，
   以 flash 的快取命中價計算，每次呼叫只多約 $0.00003～0.00006；快取失效後的第一次約多 $0.0015～0.003。
   也因此每日預算改用費用（`DAILY_COST_BUDGET`）計算，命中快取的 token 不會很快把額度用完。
-- 摘要與插話判斷不會附上原作資料。
+- 摘要不附原作資料。插話判斷會沿用和聊天相同的開頭（含原作資料），可命中快取，也讓判斷時知道她的個性。
 - 修改後用 `/persona_reload` 生效。資料一改，前綴快取要重新累積，短時間內費用會稍高。
 - 資料來源：角色資料包的 wiki（個人設定、人物關係、重要事件時間線），已移除指向未收錄台本的參考、
   內部路徑與台本語料統計。原作台本本身沒有放進 repo。
@@ -256,6 +261,23 @@ journalctl -u sayaka-bot -f
   `/persona_reload` 時若 `replies.toml` 格式錯誤，會保留目前的訊息。
 - ⚠️ **指令說明（`*_description`）在 bot 啟動、同步 slash commands 時就固定了**，`/persona_reload` 不會更新，
   修改後要**重啟 bot** 才會生效。Discord 規定說明最多 100 字，超過會被截斷。
+
+### 主動插話
+
+預設關閉，只在被 @、被回覆、私訊時回應。開啟後，她偶爾會在大家聊天時主動加入。每則一般訊息依序經過：
+
+1. **抽籤**：以 `RANDOM_INTERJECT_RATE` 的機率被抽中；訊息提到 `INTERJECT_KEYWORDS` 的話題時，改用較高的 `INTERJECT_KEYWORD_RATE`。
+2. **頻道限制**（不花錢）：她在這個頻道上次發言後未滿 `INTERJECT_CHANNEL_COOLDOWN_MINUTES` 分鐘，
+   或這一小時已插話 `INTERJECT_MAX_PER_HOUR` 次，就不插話。
+3. **判斷**：用 flash 問「以你的個性，現在主動加入是否自然、而且有話想說？」，只要一個字（是／否），
+   再從 logprobs 算出回答「是」的機率，超過 `INTERJECT_THRESHOLD` 才插話。
+   判斷沿用聊天的 prompt 開頭，可命中快取，每次約 $0.0001～0.0004。
+4. **回覆**：和一般回覆一樣，也受每人冷卻限制。
+
+建議從 `RANDOM_INTERJECT_RATE=0.03` 開始，並設定她在意的話題，例如
+`INTERJECT_KEYWORDS=便當,花式滑冰,滑冰,熬夜,DOLLCHESTRA,小熊貓,金澤`。
+log 會記錄每次判斷的機率（`插話判斷（頻道 …）：p=0.62，門檻 0.70 → 不插話`），可以照著調整門檻。
+頻道冷卻與每小時次數記在記憶體中，重啟 bot 後會歸零。
 
 ### 名字觸發（BOT_NAMES）
 

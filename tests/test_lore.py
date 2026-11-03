@@ -120,13 +120,17 @@ async def test_chat_sends_lore_first_and_stable(make_service, fake_openai, lore_
     assert first[:2] == second[:2]
 
 
-async def test_interject_judge_does_not_get_lore(make_service, fake_openai, lore_dir):
+async def test_interject_judge_reuses_chat_prefix(make_service, fake_openai, lore_dir):
+    """插話判斷沿用聊天的 prompt 開頭（原作資料＋人設），可命中快取，判斷時也知道角色個性。"""
     svc = make_service(random_interject_rate=0.5)
     svc.lore = Lore(lore_dir)
-    fake_openai.completions.replies = ["否"]
+    fake_openai.completions.replies = ["是", "插嘴"]
     await svc.handle_message(make_message("今天好累"), BOT_ID)
-    judge = fake_openai.completions.calls[0]["messages"]
-    assert all("<lore>" not in m["content"] for m in judge)
+    judge, reply = (c["messages"] for c in fake_openai.completions.calls)
+    assert judge[0]["content"] == svc.lore.text and judge[1]["content"] == "你是傲嬌大小姐。"
+    assert judge[:-1] == reply[:-1]
+    assert judge[-1]["content"].startswith(reply[-1]["content"])
+    assert "只回答一個字：是 或 否" in judge[-1]["content"]
 
 
 async def test_summary_does_not_get_lore(make_service, fake_openai, lore_dir):

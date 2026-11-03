@@ -118,6 +118,26 @@ INFO bot.holidays: 已更新 2026 年節假日：…
 - [ ] **預算上限**：把 `DAILY_COST_BUDGET` 設成 `0.0001` 並重啟 → @ 她 → 回「今天已經說了很多話了……我們明天再繼續吧。」log 出現 `超過每日預算`。測完改回來。
 - [ ] **對帳**：測試一兩天後，比對 `/usage` 的費用和 DeepSeek 後台的實際扣款。兩者應該接近；差很多的話，請檢查 `PRICE_CURRENCY` 是否和帳戶的計價幣別一致。
 
+### 2-6-1. 主動插話（選用）
+
+插話預設關閉。要測試時，在 `.env` 設定下面的值並重啟（測完記得改回來）：
+
+```
+RANDOM_INTERJECT_RATE=0.5
+INTERJECT_KEYWORDS=便當,滑冰
+INTERJECT_CHANNEL_COOLDOWN_MINUTES=2
+INTERJECT_MAX_PER_HOUR=3
+```
+
+- [ ] **會插話**：兩個人聊一陣子（不 @ 她）→ 她偶爾會主動加入，內容和話題相關。
+- [ ] **判斷紀錄**：log 有 `插話判斷（頻道 …）：p=…，門檻 0.70 → 插話／不插話`。
+- [ ] **頻道冷卻**：她插話後 2 分鐘內，不會再主動插話；但 @ 她照樣會回。
+- [ ] **每小時上限**：同一個頻道一小時內最多插話 3 次。
+- [ ] **頻道互不影響**：A 頻道達到上限時，B 頻道仍可能插話。
+- [ ] **費用**：看 `/usage`，判斷的費用很低（每次約 $0.0001～0.0004）。
+
+正式上線時，建議改用 `RANDOM_INTERJECT_RATE=0.03`、`INTERJECT_CHANNEL_COOLDOWN_MINUTES=10`，再依 log 的機率調整 `INTERJECT_THRESHOLD`。
+
 ### 2-7. 異常情況
 
 - [ ] **錯誤的 API key**：把 `DEEPSEEK_API_KEY` 改錯並重啟 → @ 她 → 回「對不起，我這邊好像出了點問題……」。log 出現 `AuthenticationError（HTTP 401）`，只出現一次，不會重試，而且**不會印出 key**。
