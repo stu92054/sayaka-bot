@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS usage (
     cache_miss_tokens INTEGER NOT NULL,
     peak INTEGER NOT NULL DEFAULT 0,
     cost REAL NOT NULL DEFAULT 0,
-    reasoning_tokens INTEGER NOT NULL DEFAULT 0
+    reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+    currency TEXT NOT NULL DEFAULT 'CNY'
 );
 CREATE INDEX IF NOT EXISTS idx_usage_day ON usage(day);
 """
@@ -77,7 +78,9 @@ class Storage:
             self._conn.executescript(SCHEMA)
             cols = {r[1] for r in self._conn.execute("PRAGMA table_info(usage)")}
             for col, ddl in (("peak", "INTEGER NOT NULL DEFAULT 0"), ("cost", "REAL NOT NULL DEFAULT 0"),
-                             ("reasoning_tokens", "INTEGER NOT NULL DEFAULT 0")):
+                             ("reasoning_tokens", "INTEGER NOT NULL DEFAULT 0"),
+                             # 加入幣別前的紀錄都是以人民幣計算
+                             ("currency", "TEXT NOT NULL DEFAULT 'CNY'")):
                 if col not in cols:  # 舊版資料庫升級
                     self._conn.execute(f"ALTER TABLE usage ADD COLUMN {col} {ddl}")
             self._conn.commit()
@@ -158,13 +161,15 @@ class Storage:
         cost: float = 0.0,
         peak: bool = False,
         reasoning_tokens: int = 0,
+        currency: str = "USD",
     ) -> None:
         with self._lock:
             self._conn.execute(
                 "INSERT INTO usage(day, created_at, model, purpose, prompt_tokens, completion_tokens, "
-                "cache_hit_tokens, cache_miss_tokens, peak, cost, reasoning_tokens) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                "cache_hit_tokens, cache_miss_tokens, peak, cost, reasoning_tokens, currency) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (day, time.time(), model, purpose, prompt_tokens, completion_tokens, cache_hit_tokens,
-                 cache_miss_tokens, int(peak), cost, reasoning_tokens),
+                 cache_miss_tokens, int(peak), cost, reasoning_tokens, currency),
             )
             self._conn.commit()
 
@@ -175,16 +180,25 @@ class Storage:
             ).fetchone()
         return int(row[0])
 
-    def cost_on(self, day: str) -> float:
+    def cost_on(self, day: str, currency: str | None = None) -> float:
+        """當天費用加總；指定 currency 時只加總該幣別（不同幣別不能相加）。"""
+        sql, args = "SELECT COALESCE(SUM(cost), 0) FROM usage WHERE day=?", [day]
+        if currency is not None:
+            sql += " AND currency=?"
+            args.append(currency)
         with self._lock:
-            row = self._conn.execute("SELECT COALESCE(SUM(cost), 0) FROM usage WHERE day=?", (day,)).fetchone()
+            row = self._conn.execute(sql, args).fetchone()
         return float(row[0])
 
-    def usage_by_model(self, day: str) -> list[UsageRow]:
+    def usage_by_model(self, day: str, currency: str | None = None) -> list[UsageRow]:
+        """依模型彙總當天用量。指定 currency 時，費用只加總該幣別的紀錄（token 數照常全部加總）。"""
+        cost_expr = "SUM(cost)" if currency is None else "SUM(CASE WHEN currency=? THEN cost ELSE 0 END)"
+        args = ([currency] if currency is not None else []) + [day]
         with self._lock:
             rows = self._conn.execute(
                 "SELECT model, COUNT(*), SUM(prompt_tokens), SUM(completion_tokens), SUM(cache_hit_tokens), "
-                "SUM(cache_miss_tokens), SUM(cost), SUM(reasoning_tokens) FROM usage WHERE day=? GROUP BY model ORDER BY model",
-                (day,),
+                f"SUM(cache_miss_tokens), {cost_expr}, SUM(reasoning_tokens) FROM usage WHERE day=? "
+                "GROUP BY model ORDER BY model",
+                args,
             ).fetchall()
         return [UsageRow(r[0], int(r[1]), int(r[2]), int(r[3]), int(r[4]), int(r[5]), float(r[6]), int(r[7])) for r in rows]

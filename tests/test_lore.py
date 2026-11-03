@@ -166,7 +166,7 @@ def test_cost_budget_config():
 async def test_cost_budget_blocks_api(make_service, fake_openai, storage):
     svc = make_service(daily_cost_budget=1.0, daily_token_budget=0)
     storage.record_usage(svc.llm.today(), "deepseek-v4-pro", "deep", 10, 10, 0, 10, cost=0.6)
-    await svc.llm.chat([{"role": "user", "content": "hi"}])  # ¥0.6 < ¥1，可以呼叫
+    await svc.llm.chat([{"role": "user", "content": "hi"}])  # 0.6 < 1，可以呼叫
     storage.record_usage(svc.llm.today(), "deepseek-v4-pro", "deep", 10, 10, 0, 10, cost=0.5)
     with pytest.raises(BudgetExceeded) as ei:
         await svc.llm.chat([{"role": "user", "content": "hi"}])
@@ -182,7 +182,7 @@ async def test_cost_budget_counts_only_today(make_service, fake_openai, storage)
 
 
 async def test_cached_tokens_barely_count_against_cost_budget(make_service, fake_openai):
-    # 每次 1 萬 tokens 的原作資料幾乎全部命中快取：空閒時段 flash 約 ¥0.0002
+    # 每次 1 萬 tokens 的原作資料幾乎全部命中快取：空閒時段 flash 每次約 $0.0001
     fake_openai.completions.usage = dict(prompt_tokens=12_000, completion_tokens=100,
                                          prompt_cache_hit_tokens=11_800, prompt_cache_miss_tokens=200)
     svc = make_service(daily_cost_budget=0.01, daily_token_budget=0)
@@ -213,7 +213,7 @@ async def test_usage_shows_cost_budget(storage, fake_openai, persona_file):
     try:
         storage.record_usage(llm.today(), "deepseek-flash", "chat", 100, 10, 50, 50, cost=1.25)
         text = format_usage(bot)
-        assert "費用：約 ¥1.2500 / 上限 ¥5（25.0%）" in text
+        assert "費用：約 $1.2500 / 上限 $5（25.0%）" in text
         assert "總 tokens：110" in text and "上限 0" not in text
     finally:
         await bot.close()

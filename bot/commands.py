@@ -26,8 +26,9 @@ def format_usage(bot: "PersonaBot") -> str:
     cost_budget = bot.config.daily_cost_budget
     token_budget = bot.config.daily_token_budget
     lines = [f"**今日用量（{bot.llm.today()}）**"]
-    lines.append(f"費用：約 ¥{cost:.4f} / 上限 ¥{cost_budget:g}（{cost / cost_budget:.1%}）"
-                 if cost_budget > 0 else f"費用：約 ¥{cost:.4f}（未設上限）")
+    cfg = bot.config
+    lines.append(f"費用：約 {cfg.money(cost)} / 上限 {cfg.currency_symbol}{cost_budget:g}（{cost / cost_budget:.1%}）"
+                 if cost_budget > 0 else f"費用：約 {cfg.money(cost)}（未設上限）")
     lines.append(f"總 tokens：{total:,} / 上限 {token_budget:,}（{total / token_budget:.1%}）"
                  if token_budget > 0 else f"總 tokens：{total:,}")
     for r in rows:
@@ -36,9 +37,9 @@ def format_usage(bot: "PersonaBot") -> str:
             f"- `{r.model}`：{r.calls} 次，輸入 {r.prompt_tokens:,}（快取命中 {r.cache_hit_tokens:,}，{hit_rate:.0%}），"
             f"輸出 {r.completion_tokens:,}"
             + (f"（推理 {r.reasoning_tokens:,}）" if r.reasoning_tokens else "")
-            + f"，約 ¥{r.cost:.4f}"
+            + f"，約 {bot.config.money(r.cost)}"
         )
-    lines.append("（費用依 DeepSeek 價目表估算，已區分高峰／空閒時段）")
+    lines.append(f"（費用依 DeepSeek {bot.config.price_currency} 價目表估算，已區分高峰／空閒時段）")
     lines.append("目前為 **高峰時段**（價格 ×1）" if bot.llm.is_peak()
                  else f"目前為空閒時段（價格 ×{bot.config.offpeak_ratio:g}）")
     cal = bot.llm.calendar

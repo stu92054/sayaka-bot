@@ -95,7 +95,7 @@ class LLMClient:
         return self.storage.tokens_on(self.today())
 
     def cost_today(self) -> float:
-        return self.storage.cost_on(self.today())
+        return self.storage.cost_on(self.today(), self.config.price_currency)
 
     def budget_status(self) -> str | None:
         """超過預算時回傳原因，否則 None。兩種上限設為 0 時不限制。"""
@@ -103,7 +103,7 @@ class LLMClient:
         if cost_budget > 0:
             spent = self.cost_today()
             if spent >= cost_budget:
-                return f"今日費用 ¥{spent:.4f} 已達上限 ¥{cost_budget:g}"
+                return f"今日費用 {self.config.money(spent)} 已達上限 {self.config.money(cost_budget, 2)}"
         token_budget = self.config.daily_token_budget
         if token_budget > 0:
             used = self.tokens_today()
@@ -115,10 +115,10 @@ class LLMClient:
         return self.budget_status() is not None
 
     def usage_today(self) -> list[UsageRow]:
-        return self.storage.usage_by_model(self.today())
+        return self.storage.usage_by_model(self.today(), self.config.price_currency)
 
     def estimate_cost(self, rows: list[UsageRow]) -> float:
-        """今日預估費用（元）。每次呼叫時已依高峰／空閒時段算好並存入資料庫。"""
+        """今日預估費用（幣別同 PRICE_CURRENCY）。每次呼叫時已依高峰／空閒時段算好並存入資料庫。"""
         return sum(r.cost for r in rows)
 
     def _is_deep(self, model: str) -> bool:
@@ -211,6 +211,6 @@ class LLMClient:
         peak = self.config.is_peak(now, self.calendar)
         cost = self.config.call_cost(model, hit, miss, completion, now, self.calendar)
         self.storage.record_usage(self.today(), model, purpose, prompt, completion, hit, miss, cost=cost, peak=peak,
-                                  reasoning_tokens=reasoning)
-        log.info("用量 %s/%s：in=%d (hit=%d) out=%d (推理 %d) ¥%.5f%s", model, purpose, prompt, hit, completion,
-                 reasoning, cost, "（高峰）" if peak else "")
+                                  reasoning_tokens=reasoning, currency=self.config.price_currency)
+        log.info("用量 %s/%s：in=%d (hit=%d) out=%d (推理 %d) %s%s", model, purpose, prompt, hit, completion,
+                 reasoning, self.config.money(cost, 6), "（高峰）" if peak else "")
