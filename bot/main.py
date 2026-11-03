@@ -17,6 +17,8 @@ from .llm import LLMClient
 from .lore import Lore
 from .persona import Persona
 from .replies import Replies
+from .tools import Tool, build_web_tools
+from .web import DeepSeekWeb
 from .storage import Storage
 from .triggers import Cooldown, detect_trigger
 
@@ -61,7 +63,7 @@ def setup_logging(config: Config) -> None:
 
 class PersonaBot(discord.Client):
     def __init__(self, config: Config, storage: Storage, llm: LLMClient, persona: Persona,
-                 replies: Replies | None = None, lore: Lore | None = None):
+                 replies: Replies | None = None, lore: Lore | None = None, web_tools: list[Tool] | None = None):
         intents = discord.Intents.default()
         intents.message_content = True  # 需要在 Developer Portal 開啟 Message Content Intent
         # 完全不允許提及（@everyone、@here、角色、使用者、被回覆者），避免模型照著使用者要求輸出 <@id> 去 ping 人。
@@ -76,7 +78,7 @@ class PersonaBot(discord.Client):
         self.lore = lore
         self.history = HistoryManager(storage, llm, config.history_max_messages, config.history_timestamps)
         self.chat = ChatService(config, llm, self.history, persona, Cooldown(config.user_cooldown_seconds),
-                                replies=self.replies, lore=lore)
+                                replies=self.replies, lore=lore, web_tools=web_tools)
         self.tree = app_commands.CommandTree(self)
         self._member_cache: dict[int, bool] = {}
         self._bg_tasks: set[asyncio.Task] = set()
@@ -196,7 +198,14 @@ def main() -> int:
     )
     calendar.load_cache(pricing_years())
     llm = LLMClient(config, storage, calendar=calendar)
-    bot = PersonaBot(config, storage, llm, persona, replies, lore)
+    web_tools = None
+    if config.web_tools_enabled:
+        web = DeepSeekWeb(config.deepseek_api_key, config.deepseek_base_url, timeout=config.web_timeout_seconds,
+                          on_billable=llm.record_web_request)
+        web_tools = build_web_tools(web, search_results=config.web_search_results,
+                                    fetch_max_chars=config.web_fetch_max_chars)
+        log.info("已啟用查資料工具：%s", "、".join(t.name for t in web_tools))
+    bot = PersonaBot(config, storage, llm, persona, replies, lore, web_tools)
     try:
         bot.run(config.discord_token, log_handler=None)
     finally:

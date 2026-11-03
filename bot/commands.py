@@ -32,6 +32,10 @@ def format_usage(bot: "PersonaBot") -> str:
     lines.append(f"總 tokens：{total:,} / 上限 {token_budget:,}（{total / token_budget:.1%}）"
                  if token_budget > 0 else f"總 tokens：{total:,}")
     for r in rows:
+        if r.model in ("deepseek-search", "deepseek-fetch"):  # 按次計費，沒有 token
+            label = "搜尋" if r.model == "deepseek-search" else "讀取網頁"
+            lines.append(f"- {label}：{r.calls} 次，約 {bot.config.money(r.cost)}")
+            continue
         hit_rate = r.cache_hit_tokens / r.prompt_tokens if r.prompt_tokens else 0
         lines.append(
             f"- `{r.model}`：{r.calls} 次，輸入 {r.prompt_tokens:,}（快取命中 {r.cache_hit_tokens:,}，{hit_rate:.0%}），"

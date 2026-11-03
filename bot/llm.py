@@ -6,7 +6,7 @@ import logging
 import math
 import time
 from datetime import datetime
-from typing import Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from zoneinfo import ZoneInfo
 
 import openai
@@ -15,6 +15,9 @@ from openai import AsyncOpenAI
 from .config import Config
 from .replies import DEFAULT_REPLIES
 from .storage import Storage, UsageRow
+
+if TYPE_CHECKING:
+    from .tools import ToolRunner
 
 log = logging.getLogger(__name__)
 
@@ -184,6 +187,7 @@ class LLMClient:
         yes: tuple[str, ...] = ("是",),
         no: tuple[str, ...] = ("否",),
         total_timeout: float | None = None,
+        tools: list[dict] | None = None,
     ) -> float:
         """讓模型回答一個字（是／否），用 logprobs 算出回答「是」的機率（0～1）。
 
@@ -191,8 +195,58 @@ class LLMClient:
         """
         choice = await self._complete(messages, model=model, max_tokens=1, purpose=purpose, temperature=0,
                                       thinking="disabled", logprobs=True, expect_truncation=True,
-                                      total_timeout=total_timeout)
+                                      total_timeout=total_timeout,
+                                      # 帶上和聊天相同的工具定義（但禁止呼叫），prompt 開頭才會和聊天一致、命中快取
+                                      tools=tools, tool_choice="none" if tools else None)
         return yes_probability_from(choice, yes, no)
+
+    async def chat_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: "ToolRunner",
+        *,
+        model: str | None = None,
+        max_tokens: int | None = None,
+        purpose: str = "chat",
+        max_rounds: int = 3,
+    ) -> str:
+        """工具迴圈：模型要求呼叫工具就執行、把結果交回，直到模型給出最終回答。
+
+        只在非思考模式使用：思考模式帶 tools 時，之後的請求都要回傳 reasoning_content，
+        而對話紀錄只存最終回答。最多 max_rounds 輪會帶工具；之後用 tool_choice="none" 要求直接回答。
+        """
+        msgs = list(messages)
+        specs = tools.specs()
+        for round_no in range(max_rounds + 1):
+            final_round = round_no >= max_rounds
+            choice = await self._complete(msgs, model=model, max_tokens=max_tokens, purpose=purpose,
+                                          thinking="disabled", tools=specs,
+                                          tool_choice="none" if final_round else "auto")
+            message = choice.message
+            calls = getattr(message, "tool_calls", None) or []
+            content = (getattr(message, "content", None) or "").strip()
+            if not calls or final_round:
+                return content
+            msgs.append({
+                "role": "assistant",
+                "content": content or None,
+                "tool_calls": [
+                    {"id": c.id, "type": "function",
+                     "function": {"name": c.function.name, "arguments": c.function.arguments}}
+                    for c in calls
+                ],
+            })
+            for c in calls:
+                result = await tools.run(c.function.name, c.function.arguments)
+                msgs.append({"role": "tool", "tool_call_id": c.id, "content": result})
+        return ""  # 不會走到這裡（最後一輪一定回傳）
+
+    def record_web_request(self, kind: str) -> None:
+        """記錄一次計費的 Search／Fetch 請求（按次計費，不分高峰時段），算進每日預算。"""
+        cost = self.config.web_request_price
+        self.storage.record_usage(self.today(), f"deepseek-{kind}", f"web_{kind}", 0, 0, 0, 0, cost=cost,
+                                  currency=self.config.price_currency)
+        log.info("用量 deepseek-%s：1 次 %s", kind, self.config.money(cost, 6))
 
     async def _complete(
         self,
@@ -207,6 +261,8 @@ class LLMClient:
         logprobs: bool = False,
         expect_truncation: bool = False,
         total_timeout: float | None = None,
+        tools: list[dict] | None = None,
+        tool_choice: str | None = None,
     ) -> Any:
         """呼叫 API（含預算檢查、單次逾時、總時限、重試、用量紀錄），回傳 choices[0]。
 
@@ -236,6 +292,10 @@ class LLMClient:
         if logprobs:
             kwargs["logprobs"] = True
             kwargs["top_logprobs"] = 10
+        if tools:
+            kwargs["tools"] = tools
+            if tool_choice is not None:
+                kwargs["tool_choice"] = tool_choice
 
         last_exc: Exception | None = None
         detail = ""

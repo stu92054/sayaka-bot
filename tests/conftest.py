@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -30,7 +31,7 @@ HANG = object()  # 模擬 DeepSeek 排隊時一直保持連線、遲遲不回應
 class FakeCompletions:
     def __init__(self):
         self.calls: list[dict] = []
-        # str、(str, finish_reason)、dict（含 logprobs）、Exception、HANG 或 SimpleNamespace（原樣回傳的回應物件），
+        # str、(str, finish_reason)、dict（含 logprobs 或 tool_calls）、Exception、HANG 或 SimpleNamespace（原樣回傳），
         # 依序取用；空了就回 default
         self.replies: list = []
         self.default = "哼，才不是特地回你的。"
@@ -48,6 +49,16 @@ class FakeCompletions:
             return item
         finish = "stop"
         logprobs = None
+        tool_calls = None
+        if isinstance(item, dict) and "tool_calls" in item:  # {"content", "tool_calls": [(name, 參數 dict), ...]}
+            tool_calls = [SimpleNamespace(id=f"call_{i}", type="function",
+                                          function=SimpleNamespace(name=n, arguments=json.dumps(a, ensure_ascii=False)))
+                          for i, (n, a) in enumerate(item["tool_calls"])]
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=item.get("content"), tool_calls=tool_calls),
+                                         finish_reason="tool_calls", logprobs=None)],
+                usage=SimpleNamespace(**self.usage),
+            )
         if isinstance(item, tuple):  # (content, finish_reason)
             item, finish = item
         elif isinstance(item, dict):  # {"content", "finish", "top": [(token, 機率), ...]}（第一個 token 的候選）
