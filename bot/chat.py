@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from .config import Config
-from .history import HistoryManager
+from .history import HistoryManager, strip_leading_stamp
 from .llm import BudgetExceeded, ContentFiltered, LLMClient, LLMError
 from .lore import Lore
 from .persona import Persona
@@ -78,7 +78,8 @@ class ChatService:
         # 先以「目前為止的歷史」組 prompt，再把當前訊息寫入歷史
         prompt = None
         if trigger is not None:
-            prompt = self.history.build_prompt(channel_id, self.persona.text, author, content, self._lore_text())
+            prompt = self.history.build_prompt(channel_id, self.persona.text, author, content, self._lore_text(),
+                                               now=self._now())
         self.history.add(channel_id, author, content)
 
         if trigger is None:
@@ -105,13 +106,15 @@ class ChatService:
             return Reply([self.replies["error"]], trigger, recorded=False)
         except ContentFiltered:
             return Reply([self.replies["content_filter"]], trigger, recorded=False)
+        text = strip_leading_stamp(text)
         if not text:
             return Reply([self.replies["error"]], trigger, recorded=False)
         self.history.add(channel_id, self.bot_display_name, text, is_bot=True)
         return Reply(split_message(text), trigger, recorded=True)
 
     async def deep(self, channel_id: int, author: str, question: str) -> Reply:
-        prompt = self.history.build_prompt(channel_id, self.persona.text, author, question, self._lore_text())
+        prompt = self.history.build_prompt(channel_id, self.persona.text, author, question, self._lore_text(),
+                                           now=self._now())
         self.history.add(channel_id, author, question)
         # 思考模式的推理內容也算在 max_tokens 內，所以 /deep 給較大的上限
         return await self.generate(channel_id, prompt, Trigger.MENTION, model=self.config.model_deep,
@@ -139,6 +142,10 @@ class ChatService:
         except (BudgetExceeded, LLMError, ContentFiltered):
             return False
         return answer.strip().startswith("是")
+
+    def _now(self):
+        """要附在 prompt 的現在時間（BOT_TIMEZONE）；SHOW_CURRENT_TIME=false 時不附。"""
+        return self.llm.now() if self.config.show_current_time else None
 
     def _lore_text(self) -> str | None:
         return self.lore.text if self.lore is not None and self.lore.enabled else None

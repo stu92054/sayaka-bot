@@ -50,6 +50,7 @@ class StoredMessage:
     author_name: str
     content: str
     is_bot: bool
+    created_at: float | None = None  # Unix 時間戳
 
 
 @dataclass(frozen=True)
@@ -107,20 +108,20 @@ class Storage:
         """最新的 limit 則，依時間由舊到新排列。"""
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id, channel_id, author_name, content, is_bot FROM messages "
+                "SELECT id, channel_id, author_name, content, is_bot, created_at FROM messages "
                 "WHERE channel_id=? ORDER BY id DESC LIMIT ?",
                 (channel_id, limit),
             ).fetchall()
-        return [StoredMessage(r[0], r[1], r[2], r[3], bool(r[4])) for r in reversed(rows)]
+        return [StoredMessage(r[0], r[1], r[2], r[3], bool(r[4]), r[5]) for r in reversed(rows)]
 
     def oldest_messages(self, channel_id: int, limit: int) -> list[StoredMessage]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id, channel_id, author_name, content, is_bot FROM messages "
+                "SELECT id, channel_id, author_name, content, is_bot, created_at FROM messages "
                 "WHERE channel_id=? ORDER BY id ASC LIMIT ?",
                 (channel_id, limit),
             ).fetchall()
-        return [StoredMessage(r[0], r[1], r[2], r[3], bool(r[4])) for r in rows]
+        return [StoredMessage(r[0], r[1], r[2], r[3], bool(r[4]), r[5]) for r in rows]
 
     def delete_messages_upto(self, channel_id: int, last_id: int) -> None:
         with self._lock:

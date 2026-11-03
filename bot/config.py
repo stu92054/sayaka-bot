@@ -165,6 +165,10 @@ class Config:
     reasoning_effort_deep: str = "high"
     deep_max_tokens: int = 8000
     history_max_messages: int = 30
+    # 在最後一則訊息附上現在時間（BOT_TIMEZONE）
+    show_current_time: bool = True
+    # 對話紀錄的每行使用者訊息加上發言時間
+    history_timestamps: bool = True
     # 每日費用上限（幣別同 PRICE_CURRENCY，依每次呼叫記錄的費用加總）；0 = 不限制
     daily_cost_budget: float = 1.0
     # 每日 token 上限（輸入＋輸出，包含命中快取的部分）；0 = 不限制
@@ -212,6 +216,8 @@ class Config:
             reasoning_effort_deep=_effort(_get(env, "REASONING_EFFORT_DEEP", "high"), "REASONING_EFFORT_DEEP"),
             deep_max_tokens=int(_get(env, "DEEP_MAX_TOKENS", "8000")),
             history_max_messages=int(_get(env, "HISTORY_MAX_MESSAGES", "30")),
+            show_current_time=_bool(_get(env, "SHOW_CURRENT_TIME", "true")),
+            history_timestamps=_bool(_get(env, "HISTORY_TIMESTAMPS", "true")),
             daily_cost_budget=float(_get(env, "DAILY_COST_BUDGET", "1")),
             daily_token_budget=int(_get(env, "DAILY_TOKEN_BUDGET", "0")),
             user_cooldown_seconds=float(_get(env, "USER_COOLDOWN_SECONDS", "5")),
