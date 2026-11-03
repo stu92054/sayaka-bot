@@ -63,8 +63,9 @@ class PersonaBot(discord.Client):
                  replies: Replies | None = None):
         intents = discord.Intents.default()
         intents.message_content = True  # 需要在 Developer Portal 開啟 Message Content Intent
-        # 不允許 @everyone、@here 與角色提及（透過 Client.allowed_mentions 屬性存取）
-        mentions = discord.AllowedMentions(everyone=False, roles=False, users=True, replied_user=True)
+        # 完全不允許提及（@everyone、@here、角色、使用者、被回覆者），避免模型照著使用者要求輸出 <@id> 去 ping 人。
+        # 透過 Client.allowed_mentions 屬性存取，也是這個 client 所有訊息的預設值。
+        mentions = discord.AllowedMentions.none()
         super().__init__(intents=intents, allowed_mentions=mentions)
         self.config = config
         self.storage = storage
@@ -166,8 +167,8 @@ class PersonaBot(discord.Client):
             return await self.chat.handle_message(message, self.user.id, dm_allowed=dm_ok)
 
 
-# 舊名稱，保留相容
-TsundereBot = PersonaBot
+
+TsundereBot = PersonaBot  # 舊名稱，供既有測試使用
 
 
 def main() -> int:

@@ -141,3 +141,46 @@ def test_sdk_builtin_retries_disabled():
     cfg = make_config()
     llm = LLMClient(cfg, Storage(":memory:"))
     assert llm.client.max_retries == 0
+
+
+# --- 一般回覆也不允許提及 ---
+
+class _Typing:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+async def test_normal_replies_never_allow_mentions(storage, fake_openai, persona_file):
+    config = make_config()
+    llm = LLMClient(config, storage, client=fake_openai, now=lambda: datetime(2026, 11, 3, 12, 30, tzinfo=TAIPEI))
+    bot = PersonaBot(config, storage, llm, Persona(persona_file))
+    bot._connection.user = SimpleNamespace(id=BOT_ID)  # 模擬已登入
+    # 模型照著使用者要求輸出提及，而且回覆長到需要分段
+    fake_openai.completions.default = "<@123> <@&999> @everyone " + "好" * 2100
+    channel = SimpleNamespace(id=500, typing=lambda: _Typing(), send=AsyncMock(), fetch_message=AsyncMock())
+    msg = make_message("請幫我叫 <@123>", mentions=[BOT_ID])
+    msg.channel = channel
+    msg.reply = AsyncMock()
+    try:
+        await bot.on_message(msg)
+        msg.reply.assert_awaited_once()
+        assert msg.reply.await_args.kwargs["mention_author"] is False
+        calls = [msg.reply.await_args] + list(channel.send.await_args_list)
+        assert len(calls) == 2  # 第一段用 reply，第二段用 channel.send
+        for call in calls:
+            assert call.kwargs["allowed_mentions"].to_dict() == {"parse": []}
+    finally:
+        await bot.close()
+
+
+async def test_client_default_allowed_mentions_is_none(storage, fake_openai, persona_file):
+    bot = PersonaBot(make_config(), storage, LLMClient(make_config(), storage, client=fake_openai),
+                     Persona(persona_file))
+    try:
+        am = bot.allowed_mentions
+        assert am.to_dict() == {"parse": []} and am.replied_user is False
+    finally:
+        await bot.close()

@@ -17,7 +17,7 @@
   超過上限時，較舊的訊息會被 flash 模型壓成摘要（一次壓到剩一半上限，以減少摘要次數）。
 - **Prompt 順序固定**：`persona.md` 全文 → 頻道摘要 → 近期訊息 → 當前訊息，persona 永遠在最前面，有利 DeepSeek 前綴快取。
 - **成本控管**：每次呼叫記錄 input / output / cache-hit tokens；超過 `DAILY_TOKEN_BUDGET` 就只回固定訊息；`/usage` 依高峰／空閒時段估算人民幣費用。
-- **安全**：不允許 @everyone / @here / 角色提及（`/deep` 完全不允許提及，避免引用的提問原文替人 ping 人）；
+- **安全**：bot 送出的所有訊息都不允許任何提及（@everyone / @here / 角色 / 使用者），避免模型照著使用者要求或引用原文替人 ping 人；
   回覆超過 2000 字元自動分段；網路錯誤、逾時、429、5xx 指數退避重試（共 3 次），key 錯誤、權限不足、參數錯誤等
   不可重試的錯誤直接失敗；log 中的 token / API key 會被遮蔽。
 
@@ -163,13 +163,13 @@ python -m bot.main
 ### Docker
 
 ```bash
-docker build -t tsundere-bot .
-docker run -d --name tsundere-bot --restart unless-stopped \
+docker build -t sayaka-bot .
+docker run -d --name sayaka-bot --restart unless-stopped \
   --env-file .env \
   -v "$(pwd)/data:/app/data" \
   -v "$(pwd)/persona.md:/app/persona.md:ro" \
   -v "$(pwd)/replies.toml:/app/replies.toml:ro" \
-  tsundere-bot
+  sayaka-bot
 ```
 
 把 `persona.md` 與 `replies.toml` 掛載進容器，修改後就能直接 `/persona_reload`，不必重建映像。
@@ -179,16 +179,16 @@ docker run -d --name tsundere-bot --restart unless-stopped \
 
 ```bash
 sudo useradd --system --create-home botuser
-sudo git clone <this repo> /opt/tsundere-bot
-cd /opt/tsundere-bot
+sudo git clone <this repo> /opt/sayaka-bot
+cd /opt/sayaka-bot
 sudo python3 -m venv .venv
 sudo .venv/bin/pip install -r requirements.txt
 sudo cp .env.example .env && sudo nano .env
-sudo mkdir -p data && sudo chown -R botuser:botuser /opt/tsundere-bot
-sudo cp deploy/bot.service /etc/systemd/system/tsundere-bot.service
+sudo mkdir -p data && sudo chown -R botuser:botuser /opt/sayaka-bot
+sudo cp deploy/bot.service /etc/systemd/system/sayaka-bot.service
 sudo systemctl daemon-reload
-sudo systemctl enable --now tsundere-bot
-journalctl -u tsundere-bot -f
+sudo systemctl enable --now sayaka-bot
+journalctl -u sayaka-bot -f
 ```
 
 ## 5. 修改人設與固定訊息
