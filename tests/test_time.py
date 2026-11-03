@@ -26,12 +26,12 @@ def ts(*args) -> float:
 # --- 格式 ---
 
 def test_format_now():
-    assert format_now(NOW) == "（現在時間：2026-11-03（週二）12:30，台灣時間）"
-    assert format_now(datetime(2026, 11, 8, 23, 5, tzinfo=TAIPEI)) == "（現在時間：2026-11-08（週日）23:05，台灣時間）"
+    assert format_now(NOW) == "（現在時間：2026-11-03（週二）12:30，台灣時間。只供參考：被問到才說時間，深夜勸休息時不要說出幾點）"
+    assert format_now(datetime(2026, 11, 8, 23, 5, tzinfo=TAIPEI)) == "（現在時間：2026-11-08（週日）23:05，台灣時間。只供參考：被問到才說時間，深夜勸休息時不要說出幾點）"
     tokyo = datetime(2026, 11, 3, 13, 30, tzinfo=ZoneInfo("Asia/Tokyo"))
-    assert format_now(tokyo).endswith("13:30，日本時間）")
+    assert format_now(tokyo).endswith("13:30，日本時間。只供參考：被問到才說時間，深夜勸休息時不要說出幾點）")
     paris = datetime(2026, 11, 3, 5, 30, tzinfo=ZoneInfo("Europe/Paris"))
-    assert format_now(paris).endswith("05:30，Europe/Paris）")
+    assert format_now(paris).endswith("05:30，Europe/Paris。只供參考：被問到才說時間，深夜勸休息時不要說出幾點）")
 
 
 def test_format_stamp_uses_bot_timezone():
@@ -62,7 +62,7 @@ def test_prompt_with_time_and_timestamps():
     assert msgs[2] == {"role": "assistant", "content": "請早點休息。"}  # bot 自己的回覆不加時間
     assert msgs[3]["content"] == (
         "[11/03 08:00] Amy: 早安\n"
-        "（現在時間：2026-11-03（週二）12:30，台灣時間）\n"
+        "（現在時間：2026-11-03（週二）12:30，台灣時間。只供參考：被問到才說時間，深夜勸休息時不要說出幾點）\n"
         "[11/03 12:30] KO: 現在幾點？"
     )
 
@@ -70,7 +70,7 @@ def test_prompt_with_time_and_timestamps():
 def test_prompt_time_without_timestamps():
     msgs = build_prompt("PERSONA", None, RECENT, "KO", "hi", now=NOW, timestamps=False)
     assert msgs[1]["content"] == "KO: 今天好累"
-    assert msgs[-1]["content"] == "Amy: 早安\n（現在時間：2026-11-03（週二）12:30，台灣時間）\nKO: hi"
+    assert msgs[-1]["content"] == "Amy: 早安\n（現在時間：2026-11-03（週二）12:30，台灣時間。只供參考：被問到才說時間，深夜勸休息時不要說出幾點）\nKO: hi"
 
 
 def test_prompt_without_now_unchanged():
@@ -101,13 +101,13 @@ async def test_chat_sends_current_time(make_service, fake_openai):
     svc.history.timestamps = True
     await svc.handle_message(make_message("今天星期幾？", mentions=[BOT_ID]), BOT_ID)
     last = fake_openai.completions.calls[0]["messages"][-1]["content"]
-    assert last == "（現在時間：2026-11-03（週二）12:30，台灣時間）\n[11/03 12:30] KO: 今天星期幾？"
+    assert last == "（現在時間：2026-11-03（週二）12:30，台灣時間。只供參考：被問到才說時間，深夜勸休息時不要說出幾點）\n[11/03 12:30] KO: 今天星期幾？"
 
 
 async def test_deep_sends_current_time(make_service, fake_openai):
     svc = make_service()
     await svc.deep(CH, "KO", "今天幾號？")
-    assert "（現在時間：2026-11-03（週二）12:30，台灣時間）" in fake_openai.completions.calls[0]["messages"][-1]["content"]
+    assert "（現在時間：2026-11-03（週二）12:30，台灣時間。只供參考：被問到才說時間，深夜勸休息時不要說出幾點）" in fake_openai.completions.calls[0]["messages"][-1]["content"]
 
 
 async def test_show_current_time_off(make_service, fake_openai):

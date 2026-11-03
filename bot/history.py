@@ -52,10 +52,14 @@ def stamped_line(author_name: str, content: str, ts: float | None, tz: tzinfo | 
     return f"[{format_stamp(ts, tz)}] {format_line(author_name, content)}"
 
 
+# 緊貼在時間後面的提醒：只寫在人設裡壓不住，深夜時她幾乎每則都會報出幾點、已經勸過還一直勸
+NOW_NOTE = "只供參考：被問到才說時間，深夜勸休息時不要說出幾點"
+
+
 def format_now(now: datetime) -> str:
     label = TIMEZONE_LABELS.get(getattr(now.tzinfo, "key", ""), getattr(now.tzinfo, "key", None) or "")
     suffix = f"，{label}" if label else ""
-    return f"（現在時間：{now:%Y-%m-%d}（週{WEEKDAYS[now.weekday()]}）{now:%H:%M}{suffix}）"
+    return f"（現在時間：{now:%Y-%m-%d}（週{WEEKDAYS[now.weekday()]}）{now:%H:%M}{suffix}。{NOW_NOTE}）"
 
 
 def strip_leading_stamp(text: str) -> str:
