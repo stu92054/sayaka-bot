@@ -8,9 +8,9 @@ from typing import Any, Callable
 
 from .config import Config
 from .history import HistoryManager
-from .llm import (BUDGET_EXCEEDED_REPLY, CONTENT_FILTER_REPLY, ERROR_REPLY, BudgetExceeded, ContentFiltered,
-                  LLMClient, LLMError)
+from .llm import BudgetExceeded, ContentFiltered, LLMClient, LLMError
 from .persona import Persona
+from .replies import Replies
 from .text import split_message
 from .triggers import Cooldown, Trigger, detect_trigger, is_ignored
 
@@ -48,6 +48,7 @@ class ChatService:
         persona: Persona,
         cooldown: Cooldown | None = None,
         rng: Callable[[], float] = random.random,
+        replies: Replies | None = None,
     ):
         self.config = config
         self.llm = llm
@@ -55,6 +56,7 @@ class ChatService:
         self.persona = persona
         self.cooldown = cooldown or Cooldown(config.user_cooldown_seconds)
         self.rng = rng
+        self.replies = replies or Replies()
 
     async def handle_message(self, message: Any, bot_user_id: int, *, dm_allowed: bool = False) -> Reply | None:
         if is_ignored(message, self.config):
@@ -95,13 +97,13 @@ class ChatService:
             text = await self.llm.chat(prompt, model=model, max_tokens=max_tokens or self.config.max_reply_tokens,
                                        purpose=purpose, thinking=thinking)
         except BudgetExceeded:
-            return Reply([BUDGET_EXCEEDED_REPLY], trigger, recorded=False)
+            return Reply([self.replies["budget_exceeded"]], trigger, recorded=False)
         except LLMError:
-            return Reply([ERROR_REPLY], trigger, recorded=False)
+            return Reply([self.replies["error"]], trigger, recorded=False)
         except ContentFiltered:
-            return Reply([CONTENT_FILTER_REPLY], trigger, recorded=False)
+            return Reply([self.replies["content_filter"]], trigger, recorded=False)
         if not text:
-            return Reply([ERROR_REPLY], trigger, recorded=False)
+            return Reply([self.replies["error"]], trigger, recorded=False)
         self.history.add(channel_id, self.bot_display_name, text, is_bot=True)
         return Reply(split_message(text), trigger, recorded=True)
 
@@ -137,4 +139,5 @@ class ChatService:
 
     @property
     def bot_display_name(self) -> str:
-        return self.config.bot_names[0] if self.config.bot_names else "bot"
+        """歷史紀錄與摘要中 bot 的名字（BOT_NAMES 可能是空的，所以另外設定）。"""
+        return self.config.bot_display_name

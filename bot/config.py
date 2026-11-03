@@ -44,7 +44,9 @@ EFFORT_CHOICES = ("low", "high", "max", "omit")
 
 
 def _strip_comment(value: str) -> str:
-    # 容許 "30     # 註解" 這種寫法
+    # 容許 "30     # 註解" 這種寫法；整個值只有註解（"# 註解"）時視為空值
+    if value.lstrip().startswith("#"):
+        return ""
     if " #" in value:
         value = value.split(" #", 1)[0]
     return value.strip()
@@ -121,7 +123,10 @@ class Config:
     deepseek_api_key: str
     allowed_guild_ids: frozenset[int] = frozenset()
     admin_user_ids: frozenset[int] = frozenset()
-    bot_names: tuple[str, ...] = ("大小姐",)
+    # 名字觸發；空 = 不使用名字觸發（只靠 @mention、回覆 bot、私訊）
+    bot_names: tuple[str, ...] = ()
+    # 歷史紀錄與摘要中 bot 的名字
+    bot_display_name: str = "沙耶香"
     model_default: str = "deepseek-flash"
     model_deep: str = "deepseek-v4-pro"
     # 兩個模型預設都開啟思考模式；一般聊天關閉以節省 token、降低延遲，/deep 開啟
@@ -138,6 +143,7 @@ class Config:
     random_interject_rate: float = 0.0
     deepseek_base_url: str = "https://api.deepseek.com"
     persona_path: Path = Path("persona.md")
+    replies_path: Path = Path("replies.toml")
     db_path: Path = Path("data/bot.sqlite3")
     timezone: str = "Asia/Taipei"
     log_level: str = "INFO"
@@ -160,7 +166,8 @@ class Config:
             deepseek_api_key=_get(env, "DEEPSEEK_API_KEY"),
             allowed_guild_ids=_int_list(_get(env, "ALLOWED_GUILD_IDS")),
             admin_user_ids=_int_list(_get(env, "ADMIN_USER_IDS")),
-            bot_names=_str_list(_get(env, "BOT_NAMES", "大小姐")),
+            bot_names=_str_list(_get(env, "BOT_NAMES", "")),
+            bot_display_name=_get(env, "BOT_DISPLAY_NAME", "沙耶香"),
             model_default=_get(env, "MODEL_DEFAULT", "deepseek-flash"),
             model_deep=_get(env, "MODEL_DEEP", "deepseek-v4-pro"),
             thinking_default=_thinking(_get(env, "THINKING_DEFAULT", "disabled"), "THINKING_DEFAULT"),
@@ -175,6 +182,7 @@ class Config:
             random_interject_rate=float(_get(env, "RANDOM_INTERJECT_RATE", "0")),
             deepseek_base_url=_get(env, "DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
             persona_path=Path(_get(env, "PERSONA_PATH", "persona.md")),
+            replies_path=Path(_get(env, "REPLIES_PATH", "replies.toml")),
             db_path=Path(_get(env, "DB_PATH", "data/bot.sqlite3")),
             timezone=_get(env, "BOT_TIMEZONE", "Asia/Taipei"),
             log_level=_get(env, "LOG_LEVEL", "INFO").upper(),
