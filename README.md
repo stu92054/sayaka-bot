@@ -14,6 +14,10 @@
 - **觸發**：被 @mention、有人回覆 bot 的訊息、私訊（限管理員或同伺服器成員）；
   可選的名字觸發（`BOT_NAMES`，預設關閉）與主動插話（預設關閉，見「主動插話」）。
 - **一律忽略**：其他 bot、不在 `ALLOWED_GUILD_IDS` 的伺服器、冷卻時間內的同一使用者。
+- **看圖**：觸發她的那則訊息若附了圖片（最多 `VISION_MAX_IMAGES` 張），會由 bot 下載後以 base64 一起送給模型
+  （`deepseek-flash` 原生支援看圖；DeepSeek 的伺服器連不到 Discord 的 CDN，所以不直接給網址）。
+  歷史紀錄裡只留 `[圖片:檔名]`，之後的對話不會重送圖片。圖片被 API 拒絕時改用純文字重試；
+  模型不支援看圖時（例如 `deepseek-v4-pro`）不送圖片——它不會報錯，只會說看不到。
 - **脈絡**：每個頻道保留最近 `HISTORY_MAX_MESSAGES` 則訊息（包含別人之間的對話，格式 `KO: 今天好累`）。
   超過上限時，較舊的訊息會被 flash 模型壓成摘要（一次壓到剩一半上限，以減少摘要次數）。
 - **時間感知**：最後一則訊息前附上現在時間（例如 `（現在時間：2026-11-03（週二）23:40，台灣時間）`），
@@ -32,7 +36,7 @@
 
 | 指令 | 說明 | 權限 |
 | --- | --- | --- |
-| `/deep <問題>` | 用 `MODEL_DEEP`（預設 `deepseek-flash`）開啟思考模式、認真回答 | 所有人 |
+| `/deep <問題> [圖片]` | 用 `MODEL_DEEP`（預設 `deepseek-flash`，開啟思考模式）回答，可附一張圖片 | 所有人 |
 | `/reset` | 清除本頻道歷史與摘要 | 管理員 |
 | `/persona_reload` | 重新讀取 `persona.md`、`lore/` 與 `replies.toml` | 管理員 |
 | `/usage` | 今日 token 用量與預估費用 | 管理員 |
@@ -92,7 +96,7 @@ cp .env.example .env
 | `BOT_NAMES` | （空） | 訊息出現這些名字就會觸發（逗號分隔，不分大小寫）；留空 = 不使用名字觸發 |
 | `BOT_DISPLAY_NAME` | `沙耶香` | 對話歷史與摘要中 bot 的名字 |
 | `MODEL_DEFAULT` | `deepseek-flash` | 一般對話、摘要、插話判斷（舊名 `deepseek-v4-flash` 仍可用） |
-| `MODEL_DEEP` | `deepseek-flash` | `/deep` 使用（可以和 `MODEL_DEFAULT` 相同；`/deep` 一律開思考模式、用 `REASONING_EFFORT_DEEP` 與 `DEEP_*` 的設定）。想要更強可改 `deepseek-v4-pro`，費用約 3～7 倍 |
+| `MODEL_DEEP` | `deepseek-flash` | `/deep` 使用（可以和 `MODEL_DEFAULT` 相同；`/deep` 一律開思考模式、用 `REASONING_EFFORT_DEEP` 與 `DEEP_*` 的設定）。想要更強可改 `deepseek-v4-pro`，費用約 3～7 倍，而且不能看圖 |
 | `THINKING_DEFAULT` | `disabled` | 一般對話的思考模式：`enabled` / `disabled` / `omit`（不送參數） |
 | `THINKING_DEEP` | `enabled` | `/deep` 的思考模式 |
 | `REASONING_EFFORT_DEFAULT` | `low` | 一般對話開啟思考時的強度（`low` / `high` / `max` / `omit` = 不送，模型預設 `high`） |
@@ -101,6 +105,10 @@ cp .env.example .env
 | `API_TIMEOUT_SECONDS` | `120` | 一般對話單次呼叫 DeepSeek 的逾時秒數（DeepSeek 排隊時會一直保持連線，需要自己計時） |
 | `DEEP_API_TIMEOUT_SECONDS` | `360` | `/deep` 單次呼叫的逾時秒數 |
 | `DEEP_TOTAL_TIMEOUT_SECONDS` | `780` | `/deep` 含重試的總時限，必須小於 900（Discord 互動 15 分鐘後失效，逾時後要來得及回覆錯誤訊息） |
+| `VISION_ENABLED` | `true` | 是否把圖片送給模型；`false` = 只附上 `[圖片:檔名]` |
+| `VISION_DETAIL` | `low` | 圖片解析度：`low`（縮到 512×512，便宜、快）/ `high` / `original`（保留原圖）/ `auto` |
+| `VISION_MAX_IMAGES` | `4` | 每則訊息最多送幾張圖片 |
+| `VISION_MAX_MB` | `8` | 單張圖片大小上限（MB），超過就只附檔名 |
 | `HISTORY_MAX_MESSAGES` | `30` | 每頻道保留的近期訊息數 |
 | `SHOW_CURRENT_TIME` | `true` | 在最後一則訊息前附上現在時間 |
 | `HISTORY_TIMESTAMPS` | `true` | 對話紀錄與摘要的每行使用者訊息加上發言時間（每則約多幾個 token） |
@@ -151,6 +159,7 @@ DeepSeek 的美元帳戶與人民幣帳戶價格不同（不是單純匯率換�
 每筆用量都會記下當時的幣別；每日預算只加總目前幣別的費用，中途切換幣別也不會把美元和人民幣加在一起。
 以美元帳戶估算：flash 一般聊天每次約 $0.0003～0.0006，`DAILY_COST_BUDGET=1` 約可回 1,700～3,300 則；
 `/deep`（flash＋思考模式）單次最多約 $0.01（高峰時段、用滿 `DEEP_MAX_TOKENS`）；改用 pro 則約 $0.03。
+圖片依尺寸換算成輸入 tokens，每張最多 1,024 tokens（未命中快取約 $0.0003）。
 
 **節假日資料**：自動從 [NateScarlet/holiday-cn](https://github.com/NateScarlet/holiday-cn)（每日抓取國務院公告）下載
 今年與明年的資料，啟動時在背景下載、之後每天更新一次，並快取在 `data/holidays/{年份}.json`。

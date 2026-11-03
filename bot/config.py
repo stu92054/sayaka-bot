@@ -128,6 +128,16 @@ def _effort(value: str, key: str) -> str:
     return value
 
 
+VISION_DETAIL_CHOICES = ("low", "high", "original", "auto")
+
+
+def _vision_detail(value: str) -> str:
+    value = value.strip().lower()
+    if value not in VISION_DETAIL_CHOICES:
+        raise ValueError(f"VISION_DETAIL 必須是 {'/'.join(VISION_DETAIL_CHOICES)} 之一")
+    return value
+
+
 def _currency(value: str) -> str:
     value = value.strip().upper()
     if value not in PRICE_TABLES:
@@ -172,6 +182,12 @@ class Config:
     deep_api_timeout_seconds: float = 360.0
     # /deep 含重試的總時限：Discord 互動的 token 15 分鐘後失效，要留時間送出錯誤回覆
     deep_total_timeout_seconds: float = 780.0
+    # 看圖：只處理觸發回覆的那則訊息裡的圖片（模型要支援，見 vision.VISION_MODELS）
+    vision_enabled: bool = True
+    # low = 縮到 512×512（便宜、快）；high / original = 保留原圖；auto 目前等同 original
+    vision_detail: str = "low"
+    vision_max_images: int = 4
+    vision_max_bytes: int = 8 * 1024 * 1024
     history_max_messages: int = 30
     # 在最後一則訊息附上現在時間（BOT_TIMEZONE）
     show_current_time: bool = True
@@ -241,6 +257,10 @@ class Config:
             api_timeout_seconds=float(_get(env, "API_TIMEOUT_SECONDS", "120")),
             deep_api_timeout_seconds=float(_get(env, "DEEP_API_TIMEOUT_SECONDS", "360")),
             deep_total_timeout_seconds=float(_get(env, "DEEP_TOTAL_TIMEOUT_SECONDS", "780")),
+            vision_enabled=_bool(_get(env, "VISION_ENABLED", "true")),
+            vision_detail=_vision_detail(_get(env, "VISION_DETAIL", "low")),
+            vision_max_images=int(_get(env, "VISION_MAX_IMAGES", "4")),
+            vision_max_bytes=int(float(_get(env, "VISION_MAX_MB", "8")) * 1024 * 1024),
             history_max_messages=int(_get(env, "HISTORY_MAX_MESSAGES", "30")),
             show_current_time=_bool(_get(env, "SHOW_CURRENT_TIME", "true")),
             history_timestamps=_bool(_get(env, "HISTORY_TIMESTAMPS", "true")),

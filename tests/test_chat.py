@@ -117,8 +117,8 @@ async def test_deep_uses_deep_model(make_service, fake_openai, storage):
 
 async def test_attachments_are_described(make_service, storage):
     svc = make_service()
-    await svc.handle_message(make_message("", attachments=["cat.png"]), BOT_ID)
-    assert storage.recent_messages(500, 1)[0].content == "[附件:cat.png]"
+    await svc.handle_message(make_message("", attachments=["cat.png", "notes.pdf"]), BOT_ID)
+    assert storage.recent_messages(500, 1)[0].content == "[圖片:cat.png] [附件:notes.pdf]"
 
 
 async def test_persona_reload(make_service, fake_openai, persona_file):
