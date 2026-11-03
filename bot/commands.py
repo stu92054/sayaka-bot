@@ -93,8 +93,9 @@ def register_commands(bot: "PersonaBot") -> None:
 
     # 指令說明在註冊時讀取，Discord 同步後就固定了：修改 replies.toml 的 *_description 要重啟 bot
     @tree.command(name="deep", description=bot.replies["deep_description"])
-    @app_commands.describe(question="你的問題")
-    async def deep(interaction: discord.Interaction, question: str) -> None:
+    @app_commands.describe(question="你的問題", image="附上一張圖片（選填）")
+    async def deep(interaction: discord.Interaction, question: str,
+                   image: discord.Attachment | None = None) -> None:
         if not await _guard(interaction, admin=False):
             return
         if not bot.chat.cooldown.try_acquire(interaction.user.id):
@@ -102,7 +103,7 @@ def register_commands(bot: "PersonaBot") -> None:
             return
         await interaction.response.defer(thinking=True)
         name = getattr(interaction.user, "display_name", interaction.user.name)
-        reply = await bot.chat.deep(interaction.channel_id, name, question)
+        reply = await bot.chat.deep(interaction.channel_id, name, question, [image] if image else None)
         header = f"> {name}：{question[:200]}\n"
         chunks = split_message(header + "\n".join(reply.chunks))
         # 回覆開頭會引用提問原文；問題裡若有 <@id>，不能讓 bot 替提問者 ping 人

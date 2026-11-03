@@ -8,6 +8,8 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Any, Callable
 
+import openai
+
 from .config import Config
 from .history import HistoryManager, strip_leading_stamp
 from .llm import BudgetExceeded, ContentFiltered, LLMClient, LLMError
@@ -17,6 +19,7 @@ from .replies import Replies
 from .text import split_message
 from .tools import WEB_TOOLS_GUIDE, Tool, ToolRunner, suppress_embeds
 from .triggers import Cooldown, Trigger, detect_trigger, is_ignored
+from .vision import attach_images, is_image, load_images, supports_vision
 
 log = logging.getLogger(__name__)
 
@@ -51,12 +54,16 @@ def display_author(name: str, config: Config) -> str:
     return name
 
 
+def describe_attachments(attachments: list[Any]) -> str:
+    """附件在歷史紀錄裡的文字：圖片寫 [圖片:檔名]，其他檔案寫 [附件:檔名]。"""
+    return " ".join(f"[{'圖片' if is_image(a) else '附件'}:{getattr(a, 'filename', '檔案')}]" for a in attachments)
+
+
 def message_text(message: Any) -> str:
     text = (getattr(message, "clean_content", None) or getattr(message, "content", "") or "").strip()
     attachments = getattr(message, "attachments", None) or []
-    names = [getattr(a, "filename", "檔案") for a in attachments]
-    if names:
-        text = (text + " " if text else "") + " ".join(f"[附件:{n}]" for n in names)
+    if attachments:
+        text = (text + " " if text else "") + describe_attachments(attachments)
     return text
 
 
@@ -124,27 +131,41 @@ class ChatService:
         if not self.cooldown.try_acquire(message.author.id):
             return None
 
+        # 插話判斷只看文字；要回覆時才下載這則訊息的圖片
+        model = self.config.model_default
+        images = await self._images_for(getattr(message, "attachments", None) or [], model)
         runner = None
         if self.tools_enabled:
             # 插話不查資料（max_calls=0）：仍帶工具定義，prompt 開頭才和其他聊天一致、命中快取
             runner = self._tool_runner(message.author.id, content, prompt,
                                        max_calls=0 if trigger is Trigger.INTERJECT else None)
-        return await self.generate(channel_id, prompt, trigger, model=self.config.model_default, tool_runner=runner)
+        return await self.generate(channel_id, prompt, trigger, model=model, tool_runner=runner, images=images)
 
     async def generate(self, channel_id: int, prompt: list[dict[str, str]], trigger: Trigger,
                        *, model: str, purpose: str = "chat", max_tokens: int | None = None,
                        thinking: str | None = None, total_timeout: float | None = None,
                        reasoning_effort: str | None = None, call_timeout: float | None = None,
-                       tool_runner: ToolRunner | None = None) -> Reply:
+                       tool_runner: ToolRunner | None = None, images: list[str] | None = None) -> Reply:
+        """images：要附在最後一則訊息的圖片（data URL）。圖片被 API 拒絕時改用純文字重試一次。"""
         max_tokens = max_tokens or self.config.max_reply_tokens
-        try:
+
+        async def ask(messages: list[dict[str, Any]]) -> str:
             if tool_runner is not None:
-                text = await self.llm.chat_with_tools(prompt, tool_runner, model=model, max_tokens=max_tokens,
+                return await self.llm.chat_with_tools(messages, tool_runner, model=model, max_tokens=max_tokens,
                                                       purpose=purpose, max_rounds=tool_runner.max_calls)
-            else:
-                text = await self.llm.chat(prompt, model=model, max_tokens=max_tokens,
-                                           purpose=purpose, thinking=thinking, total_timeout=total_timeout,
-                                           reasoning_effort=reasoning_effort, call_timeout=call_timeout)
+            return await self.llm.chat(messages, model=model, max_tokens=max_tokens,
+                                       purpose=purpose, thinking=thinking, total_timeout=total_timeout,
+                                       reasoning_effort=reasoning_effort, call_timeout=call_timeout)
+
+        try:
+            try:
+                # 圖片只在送出前附上；工具迴圈接在後面的訊息不受影響，圖片一直留在 user 訊息裡
+                text = await ask(attach_images(prompt, images or [], self.config.vision_detail))
+            except LLMError as exc:
+                if not images or not isinstance(exc.__cause__, openai.BadRequestError):
+                    raise
+                log.warning("圖片被 API 拒絕（%s），改用純文字重試", exc)
+                text = await ask(prompt)
         except BudgetExceeded:
             return Reply([self.replies["budget_exceeded"]], trigger, recorded=False)
         except LLMError:
@@ -163,11 +184,14 @@ class ChatService:
             self._interjections[channel_id].append(now)
         return Reply(split_message(text), trigger, recorded=True)
 
-    async def deep(self, channel_id: int, author: str, question: str) -> Reply:
+    async def deep(self, channel_id: int, author: str, question: str, attachments: list[Any] | None = None) -> Reply:
         author = display_author(author, self.config)
-        prompt = self.history.build_prompt(channel_id, self.persona.text, author, question, self._lore_text(),
+        attachments = attachments or []
+        content = f"{question} {describe_attachments(attachments)}" if attachments else question
+        prompt = self.history.build_prompt(channel_id, self.persona.text, author, content, self._lore_text(),
                                            now=self._now())
-        self.history.add(channel_id, author, question)
+        self.history.add(channel_id, author, content)
+        images = await self._images_for(attachments, self.config.model_deep)
         # 思考模式的推理內容也算在 max_tokens 內，所以 /deep 給較大的上限；
         # 總時限要短於 Discord 互動的 15 分鐘，失敗時才來得及回覆錯誤訊息。
         # 思考模式、強度、單次逾時都明確指定，不靠模型名稱判斷（MODEL_DEEP 可以和一般聊天同一個模型）
@@ -176,7 +200,16 @@ class ChatService:
                                    thinking=self.config.thinking_deep,
                                    reasoning_effort=self.config.reasoning_effort_deep,
                                    call_timeout=self.config.deep_api_timeout_seconds,
-                                   total_timeout=self.config.deep_total_timeout_seconds)
+                                   total_timeout=self.config.deep_total_timeout_seconds, images=images)
+
+    async def _images_for(self, attachments: list[Any], model: str) -> list[str]:
+        if not attachments or not any(is_image(a) for a in attachments):
+            return []
+        if not supports_vision(model, self.config):
+            # 不支援看圖的模型收到圖片不會報錯，只會說看不到，所以乾脆不送
+            log.info("模型 %s 不支援看圖（或 VISION_ENABLED=false），圖片只以檔名附上", model)
+            return []
+        return await load_images(attachments, self.config)
 
     def interject_allowed(self, channel_id: int) -> bool:
         """頻道層級的插話限制：她上次發言後的冷卻、每小時上限。"""
