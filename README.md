@@ -1,19 +1,25 @@
-# 傲嬌大小姐 Discord Bot（DeepSeek 驅動）
+# 村野沙耶香 Discord Bot（DeepSeek 驅動）
 
-在 Discord 群組裡聊天的傲嬌大小姐。使用 DeepSeek API（`openai` SDK），對話歷史、摘要與用量存在 SQLite。
-人設全部寫在 [`persona.md`](persona.md)，程式只負責載入。
+在台灣蓮之空粉絲的 Discord 群組裡，扮演『Love Live! 蓮之空女學院學園偶像俱樂部』的村野沙耶香聊天。
+使用 DeepSeek API（`openai` SDK），對話歷史、摘要與用量存在 SQLite。
+
+角色相關的內容全部放在兩個檔案，程式只負責載入，換角色時不用改程式：
+
+- [`persona.md`](persona.md)：人設（system prompt）
+- [`replies.toml`](replies.toml)：固定訊息（額度用完、錯誤、權限不足、冷卻中…）與 slash command 說明
 
 ## 功能概要
 
-- **觸發**：被 @mention、有人回覆 bot 的訊息、私訊（限管理員或同伺服器成員）、訊息包含 `BOT_NAMES` 裡的名字；
-  可選的隨機插話（`RANDOM_INTERJECT_RATE > 0`，插話前會先用 flash 模型判斷值不值得插嘴）。
+- **觸發**：被 @mention、有人回覆 bot 的訊息、私訊（限管理員或同伺服器成員）；
+  可選的名字觸發（`BOT_NAMES`，預設關閉）與隨機插話（`RANDOM_INTERJECT_RATE > 0`，插話前會先用 flash 模型判斷值不值得插嘴）。
 - **一律忽略**：其他 bot、不在 `ALLOWED_GUILD_IDS` 的伺服器、冷卻時間內的同一使用者。
 - **脈絡**：每個頻道保留最近 `HISTORY_MAX_MESSAGES` 則訊息（包含別人之間的對話，格式 `KO: 今天好累`）。
   超過上限時，較舊的訊息會被 flash 模型壓成摘要（一次壓到剩一半上限，以減少摘要次數）。
 - **Prompt 順序固定**：`persona.md` 全文 → 頻道摘要 → 近期訊息 → 當前訊息，persona 永遠在最前面，有利 DeepSeek 前綴快取。
 - **成本控管**：每次呼叫記錄 input / output / cache-hit tokens；超過 `DAILY_TOKEN_BUDGET` 就只回固定訊息；`/usage` 依高峰／空閒時段估算人民幣費用。
-- **安全**：不允許 @everyone / @here / 角色提及；回覆超過 2000 字元自動分段；API 錯誤指數退避重試（最多 3 次）；
-  log 中的 token / API key 會被遮蔽。
+- **安全**：不允許 @everyone / @here / 角色提及（`/deep` 完全不允許提及，避免引用的提問原文替人 ping 人）；
+  回覆超過 2000 字元自動分段；網路錯誤、逾時、429、5xx 指數退避重試（共 3 次），key 錯誤、權限不足、參數錯誤等
+  不可重試的錯誤直接失敗；log 中的 token / API key 會被遮蔽。
 
 ### Slash commands
 
@@ -21,7 +27,7 @@
 | --- | --- | --- |
 | `/deep <問題>` | 用 `MODEL_DEEP`（預設 `deepseek-v4-pro`，開啟思考模式）回答 | 所有人 |
 | `/reset` | 清除本頻道歷史與摘要 | 管理員 |
-| `/persona_reload` | 重新讀取 `persona.md` | 管理員 |
+| `/persona_reload` | 重新讀取 `persona.md` 與 `replies.toml` | 管理員 |
 | `/usage` | 今日 token 用量與預估費用 | 管理員 |
 
 「管理員」指 `ADMIN_USER_IDS` 中的使用者。
@@ -76,7 +82,8 @@ cp .env.example .env
 | `DEEPSEEK_API_KEY` | — | DeepSeek API key |
 | `ALLOWED_GUILD_IDS` | — | 逗號分隔，只在這些伺服器運作 |
 | `ADMIN_USER_IDS` | — | 可用管理指令的使用者 |
-| `BOT_NAMES` | `大小姐` | 訊息出現這些名字就會觸發（逗號分隔，不分大小寫） |
+| `BOT_NAMES` | （空） | 訊息出現這些名字就會觸發（逗號分隔，不分大小寫）；留空 = 不使用名字觸發 |
+| `BOT_DISPLAY_NAME` | `沙耶香` | 對話歷史與摘要中 bot 的名字 |
 | `MODEL_DEFAULT` | `deepseek-flash` | 一般對話、摘要、插話判斷（舊名 `deepseek-v4-flash` 仍可用） |
 | `MODEL_DEEP` | `deepseek-v4-pro` | `/deep` 使用 |
 | `THINKING_DEFAULT` | `disabled` | 一般對話的思考模式：`enabled` / `disabled` / `omit`（不送參數） |
@@ -90,6 +97,7 @@ cp .env.example .env
 | `MAX_REPLY_TOKENS` | `600` | 每次回覆的最大 tokens |
 | `RANDOM_INTERJECT_RATE` | `0` | 主動插話機率（0～1） |
 | `PERSONA_PATH` | `persona.md` | 人設檔路徑 |
+| `REPLIES_PATH` | `replies.toml` | 固定訊息與指令說明的檔案路徑 |
 | `DB_PATH` | `data/bot.sqlite3` | SQLite 檔路徑 |
 | `BOT_TIMEZONE` | `Asia/Taipei` | 計算「今日」用量的時區 |
 | `LOG_LEVEL` | `INFO` | log 等級 |
@@ -160,10 +168,11 @@ docker run -d --name tsundere-bot --restart unless-stopped \
   --env-file .env \
   -v "$(pwd)/data:/app/data" \
   -v "$(pwd)/persona.md:/app/persona.md:ro" \
+  -v "$(pwd)/replies.toml:/app/replies.toml:ro" \
   tsundere-bot
 ```
 
-把 `persona.md` 掛載進容器，修改後就能直接 `/persona_reload`，不必重建映像。
+把 `persona.md` 與 `replies.toml` 掛載進容器，修改後就能直接 `/persona_reload`，不必重建映像。
 （`data/` 目錄需要容器內 uid 1000 可寫入：`mkdir -p data && sudo chown 1000 data`。）
 
 ### systemd 常駐
@@ -182,13 +191,42 @@ sudo systemctl enable --now tsundere-bot
 journalctl -u tsundere-bot -f
 ```
 
-## 5. 修改人設
+## 5. 修改人設與固定訊息
+
+### persona.md
 
 1. 編輯 `persona.md`（純文字 / Markdown，整份會原封不動放進 system prompt 的最前面）。
 2. 在 Discord 輸入 `/persona_reload`（管理員），bot 會重新讀檔，下一則回覆起生效，不用重啟。
 3. 若讀檔失敗（檔案不存在或是空的），會保留舊的人設並回報錯誤。
 
 小提醒：persona 內容一改，DeepSeek 的前綴快取就要重新累積，短時間內快取命中率會下降，這是正常的。
+
+### replies.toml
+
+不經過模型、由 bot 直接送出的固定訊息，用角色口吻寫在這裡，避免換人設後穿幫：
+
+| 項目 | 用途 |
+| --- | --- |
+| `budget_exceeded` | 超過 `DAILY_TOKEN_BUDGET` 時的回覆 |
+| `error` | API 失敗時的回覆 |
+| `content_filter` | 回覆被 DeepSeek 內容過濾時的回覆 |
+| `not_admin` | 非管理員使用管理指令 |
+| `not_allowed` | 在不允許的伺服器使用指令 |
+| `cooldown` | `/deep` 冷卻中 |
+| `reset` | `/reset` 完成 |
+| `deep_description`、`reset_description`、`persona_reload_description`、`usage_description` | slash command 的說明文字 |
+
+- 檔案不存在、格式錯誤或缺項時，使用程式內建的**中性**預設訊息並在 log 記一筆 warning，bot 照常啟動。
+- `/persona_reload` 會同時重新讀取 `persona.md` 與 `replies.toml`，有警告時會一併回報給管理員。
+  `/persona_reload` 時若 `replies.toml` 格式錯誤，會保留目前的訊息。
+- ⚠️ **指令說明（`*_description`）在 bot 啟動、同步 slash commands 時就固定了**，`/persona_reload` 不會更新，
+  修改後要**重啟 bot** 才會生效。Discord 規定說明最多 100 字，超過會被截斷。
+
+### 名字觸發（BOT_NAMES）
+
+在粉絲群組裡，大家聊到角色本人時一定會提到「沙耶香」「さやか」，用角色名觸發會讓 bot 一直插話，
+所以 `BOT_NAMES` 預設留空（只靠 @mention、回覆 bot 和私訊觸發）。
+如果想用名字叫她，建議設一個大家不會順口提到的專屬暱稱。
 
 ## 測試
 
@@ -198,7 +236,7 @@ pytest
 ```
 
 測試完全使用 mock，不會連到 Discord 或 DeepSeek。涵蓋：觸發規則、冷卻、歷史裁切與摘要觸發、訊息分段、預算超限、
-重試、用量紀錄、log 遮蔽等。
+重試（含不可重試的錯誤）、用量紀錄、log 遮蔽、replies.toml 載入與缺項處理、/deep 不允許提及等。
 
 ## 專案結構
 
@@ -213,9 +251,11 @@ bot/
   commands.py   # slash commands
   storage.py    # SQLite
   persona.py    # persona.md 載入
+  replies.py    # replies.toml 載入（固定訊息、指令說明）
   holidays.py   # 中國節假日／調休資料（判斷高峰時段）
   text.py       # 2000 字元分段
 persona.md
+replies.toml
 tests/
 deploy/bot.service
 Dockerfile

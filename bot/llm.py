@@ -7,16 +7,35 @@ from datetime import datetime
 from typing import Any, Awaitable, Callable
 from zoneinfo import ZoneInfo
 
+import openai
 from openai import AsyncOpenAI
 
 from .config import Config
+from .replies import DEFAULT_REPLIES
 from .storage import Storage, UsageRow
 
 log = logging.getLogger(__name__)
 
-BUDGET_EXCEEDED_REPLY = "哼，本小姐今天說太多話了，明天再說吧。"
-ERROR_REPLY = "……本小姐現在沒心情說話，等一下再來。（連線出了點問題）"
-CONTENT_FILTER_REPLY = "哼，這種話本小姐才不說呢。"
+# 固定訊息改由 replies.toml 提供（見 bot/replies.py）；這裡只是中性預設值的別名
+BUDGET_EXCEEDED_REPLY = DEFAULT_REPLIES["budget_exceeded"]
+ERROR_REPLY = DEFAULT_REPLIES["error"]
+CONTENT_FILTER_REPLY = DEFAULT_REPLIES["content_filter"]
+
+# 這些錯誤重試也不會成功（key 錯誤、沒有權限、參數錯誤、模型不存在…），直接失敗
+NON_RETRYABLE_ERRORS: tuple[type[Exception], ...] = (
+    openai.AuthenticationError,      # 401
+    openai.PermissionDeniedError,    # 403
+    openai.BadRequestError,          # 400
+    openai.NotFoundError,            # 404
+    openai.UnprocessableEntityError,  # 422
+)
+
+
+def describe_error(exc: BaseException) -> str:
+    """給 log 用的錯誤描述：類別名稱與 HTTP 狀態碼，不含訊息內容（可能帶有 key 片段）。"""
+    status = getattr(exc, "status_code", None)
+    return f"{type(exc).__name__}" + (f"（HTTP {status}）" if status is not None else "")
+
 
 # finish_reason 為這些值時表示生成被打斷，視同失敗並重試
 RETRYABLE_FINISH_REASONS = {"insufficient_system_resource", "aborted"}
@@ -53,7 +72,9 @@ class LLMClient:
     ):
         self.config = config
         self.storage = storage
-        self.client = client or AsyncOpenAI(api_key=config.deepseek_api_key, base_url=config.deepseek_base_url)
+        # 關閉 SDK 內建重試（預設 2 次），統一由這裡的重試邏輯控制
+        self.client = client or AsyncOpenAI(api_key=config.deepseek_api_key, base_url=config.deepseek_base_url,
+                                            max_retries=0)
         self.max_attempts = max_attempts
         self.base_delay = base_delay
         self._sleep = sleep
@@ -132,11 +153,14 @@ class LLMClient:
                 finish = getattr(choice, "finish_reason", None)
                 if finish in RETRYABLE_FINISH_REASONS:
                     raise _Interrupted(finish)
-            except Exception as exc:  # noqa: BLE001 - 任何 API/網路錯誤都要重試
+            except NON_RETRYABLE_ERRORS as exc:
+                log.error("DeepSeek 呼叫失敗，不重試（%s）：%s", purpose, describe_error(exc))
+                raise LLMError(f"DeepSeek 呼叫失敗：{describe_error(exc)}") from exc
+            except Exception as exc:  # noqa: BLE001 - 網路錯誤、逾時、429、5xx 等都重試
                 last_exc = exc
                 log.warning("DeepSeek 呼叫失敗（第 %d/%d 次，%s）：%s",
                             attempt, self.max_attempts, purpose,
-                            f"finish_reason={exc}" if isinstance(exc, _Interrupted) else type(exc).__name__)
+                            f"finish_reason={exc}" if isinstance(exc, _Interrupted) else describe_error(exc))
                 if attempt < self.max_attempts:
                     await self._sleep(self.base_delay * (2 ** (attempt - 1)))
                 continue
@@ -149,7 +173,7 @@ class LLMClient:
                 log.warning("回覆達到 max_tokens 上限（%s，max_tokens=%s，最終回答 %d 字）",
                             purpose, kwargs["max_tokens"], len(content))
             return content
-        raise LLMError(f"DeepSeek 呼叫失敗：{type(last_exc).__name__}") from last_exc
+        raise LLMError(f"DeepSeek 呼叫失敗：{describe_error(last_exc)}") from last_exc
 
     def _record(self, model: str, purpose: str, usage: Any) -> None:
         if usage is None:

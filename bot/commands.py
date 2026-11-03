@@ -10,19 +10,16 @@ from discord import app_commands
 from .text import split_message
 
 if TYPE_CHECKING:
-    from .main import TsundereBot
+    from .main import PersonaBot
 
 log = logging.getLogger(__name__)
 
-NOT_ADMIN_REPLY = "哼，你沒有資格對本小姐下這種命令。"
-NOT_ALLOWED_REPLY = "本小姐不在這裡營業。"
 
-
-def is_admin(bot: "TsundereBot", user_id: int) -> bool:
+def is_admin(bot: "PersonaBot", user_id: int) -> bool:
     return user_id in bot.config.admin_user_ids
 
 
-def format_usage(bot: "TsundereBot") -> str:
+def format_usage(bot: "PersonaBot") -> str:
     rows = bot.llm.usage_today()
     total = sum(r.total_tokens for r in rows)
     budget = bot.config.daily_token_budget
@@ -46,57 +43,71 @@ def format_usage(bot: "TsundereBot") -> str:
     return "\n".join(lines)
 
 
-def register_commands(bot: "TsundereBot") -> None:
+def reload_persona_and_replies(bot: "PersonaBot") -> str:
+    """重新讀取 persona.md 與 replies.toml，回傳給管理員看的結果。"""
+    lines = []
+    try:
+        text = bot.persona.reload()
+        lines.append(f"已重新載入人設（{len(text)} 字）。")
+    except (OSError, ValueError) as exc:
+        log.exception("persona 重新載入失敗")
+        lines.append(f"人設讀取失敗，沿用舊的人設：{type(exc).__name__}: {exc}")
+    warnings = bot.replies.reload()
+    if warnings:
+        lines.append("固定訊息已重新載入，但有以下警告：")
+        lines.extend(f"- {w}" for w in warnings[:10])
+    else:
+        lines.append("已重新載入固定訊息。")
+    lines.append("（指令說明要重啟 bot 才會更新。）")
+    return "\n".join(lines)
+
+
+def register_commands(bot: "PersonaBot") -> None:
     tree = bot.tree
 
     async def _guard(interaction: discord.Interaction, *, admin: bool) -> bool:
         guild = interaction.guild
         if guild is not None and guild.id not in bot.config.allowed_guild_ids:
-            await interaction.response.send_message(NOT_ALLOWED_REPLY, ephemeral=True)
+            await interaction.response.send_message(bot.replies["not_allowed"], ephemeral=True)
             return False
         if admin and not is_admin(bot, interaction.user.id):
-            await interaction.response.send_message(NOT_ADMIN_REPLY, ephemeral=True)
+            await interaction.response.send_message(bot.replies["not_admin"], ephemeral=True)
             return False
         return True
 
-    @tree.command(name="deep", description="讓大小姐認真思考回答一個問題（使用深度模型）")
+    # 指令說明在註冊時讀取，Discord 同步後就固定了：修改 replies.toml 的 *_description 要重啟 bot
+    @tree.command(name="deep", description=bot.replies["deep_description"])
     @app_commands.describe(question="你的問題")
     async def deep(interaction: discord.Interaction, question: str) -> None:
         if not await _guard(interaction, admin=False):
             return
         if not bot.chat.cooldown.try_acquire(interaction.user.id):
-            await interaction.response.send_message("急什麼，等一下啦。", ephemeral=True)
+            await interaction.response.send_message(bot.replies["cooldown"], ephemeral=True)
             return
         await interaction.response.defer(thinking=True)
         name = getattr(interaction.user, "display_name", interaction.user.name)
         reply = await bot.chat.deep(interaction.channel_id, name, question)
         header = f"> {name}：{question[:200]}\n"
         chunks = split_message(header + "\n".join(reply.chunks))
+        # 回覆開頭會引用提問原文；問題裡若有 <@id>，不能讓 bot 替提問者 ping 人
         for chunk in chunks:
-            await interaction.followup.send(chunk, allowed_mentions=bot.allowed_mentions)
+            await interaction.followup.send(chunk, allowed_mentions=discord.AllowedMentions.none())
         bot.schedule_summary(interaction.channel_id)
 
-    @tree.command(name="reset", description="清除本頻道的對話歷史與摘要（管理員）")
+    @tree.command(name="reset", description=bot.replies["reset_description"])
     async def reset(interaction: discord.Interaction) -> None:
         if not await _guard(interaction, admin=True):
             return
         bot.history.reset(interaction.channel_id)
-        await interaction.response.send_message("好啦，剛剛的事本小姐全忘了……才、才不是因為你叫我忘的！",
-                                                ephemeral=True)
+        await interaction.response.send_message(bot.replies["reset"], ephemeral=True)
 
-    @tree.command(name="persona_reload", description="重新讀取 persona.md（管理員）")
+    @tree.command(name="persona_reload", description=bot.replies["persona_reload_description"])
     async def persona_reload(interaction: discord.Interaction) -> None:
         if not await _guard(interaction, admin=True):
             return
-        try:
-            text = bot.persona.reload()
-        except (OSError, ValueError) as exc:
-            log.exception("persona 重新載入失敗")
-            await interaction.response.send_message(f"讀取失敗：{type(exc).__name__}: {exc}", ephemeral=True)
-            return
-        await interaction.response.send_message(f"已重新載入人設（{len(text)} 字）。", ephemeral=True)
+        await interaction.response.send_message(reload_persona_and_replies(bot), ephemeral=True)
 
-    @tree.command(name="usage", description="顯示今日 token 用量與預估費用（管理員）")
+    @tree.command(name="usage", description=bot.replies["usage_description"])
     async def usage(interaction: discord.Interaction) -> None:
         if not await _guard(interaction, admin=True):
             return

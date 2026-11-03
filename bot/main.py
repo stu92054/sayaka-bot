@@ -15,6 +15,7 @@ from .history import HistoryManager
 from .holidays import HolidayCalendar, pricing_years
 from .llm import LLMClient
 from .persona import Persona
+from .replies import Replies
 from .storage import Storage
 from .triggers import Cooldown, detect_trigger
 
@@ -57,8 +58,9 @@ def setup_logging(config: Config) -> None:
     logging.getLogger("discord.http").setLevel(logging.WARNING)
 
 
-class TsundereBot(discord.Client):
-    def __init__(self, config: Config, storage: Storage, llm: LLMClient, persona: Persona):
+class PersonaBot(discord.Client):
+    def __init__(self, config: Config, storage: Storage, llm: LLMClient, persona: Persona,
+                 replies: Replies | None = None):
         intents = discord.Intents.default()
         intents.message_content = True  # 需要在 Developer Portal 開啟 Message Content Intent
         # 不允許 @everyone、@here 與角色提及（透過 Client.allowed_mentions 屬性存取）
@@ -68,8 +70,10 @@ class TsundereBot(discord.Client):
         self.storage = storage
         self.llm = llm
         self.persona = persona
+        self.replies = replies or Replies()
         self.history = HistoryManager(storage, llm, config.history_max_messages)
-        self.chat = ChatService(config, llm, self.history, persona, Cooldown(config.user_cooldown_seconds))
+        self.chat = ChatService(config, llm, self.history, persona, Cooldown(config.user_cooldown_seconds),
+                                replies=self.replies)
         self.tree = app_commands.CommandTree(self)
         self._member_cache: dict[int, bool] = {}
         self._bg_tasks: set[asyncio.Task] = set()
@@ -162,6 +166,10 @@ class TsundereBot(discord.Client):
             return await self.chat.handle_message(message, self.user.id, dm_allowed=dm_ok)
 
 
+# 舊名稱，保留相容
+TsundereBot = PersonaBot
+
+
 def main() -> int:
     config = Config.from_env()
     setup_logging(config)
@@ -175,6 +183,7 @@ def main() -> int:
     log.info("設定：%r", config)
 
     persona = Persona(config.persona_path)
+    replies = Replies(config.replies_path)  # 缺檔或缺項只記 warning，不會中止
     storage = Storage(config.db_path)
     calendar = HolidayCalendar(
         cache_dir=config.db_path.parent / "holidays",
@@ -183,7 +192,7 @@ def main() -> int:
     )
     calendar.load_cache(pricing_years())
     llm = LLMClient(config, storage, calendar=calendar)
-    bot = TsundereBot(config, storage, llm, persona)
+    bot = PersonaBot(config, storage, llm, persona, replies)
     try:
         bot.run(config.discord_token, log_handler=None)
     finally:
