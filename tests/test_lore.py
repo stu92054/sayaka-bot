@@ -158,7 +158,7 @@ async def test_persona_reload_reloads_lore(storage, fake_openai, persona_file, l
 
 def test_cost_budget_config():
     cfg = Config.from_env({})
-    assert cfg.daily_cost_budget == 5.0 and cfg.daily_token_budget == 0
+    assert cfg.daily_cost_budget == 1.0 and cfg.daily_token_budget == 0
     cfg = Config.from_env({"DAILY_COST_BUDGET": "12.5", "DAILY_TOKEN_BUDGET": "3000000"})
     assert cfg.daily_cost_budget == 12.5 and cfg.daily_token_budget == 3_000_000
 

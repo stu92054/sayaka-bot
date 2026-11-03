@@ -95,7 +95,7 @@ cp .env.example .env
 | `REASONING_EFFORT_DEEP` | `high` | `/deep` 的思考強度 |
 | `DEEP_MAX_TOKENS` | `8000` | `/deep` 的 max_tokens（推理 tokens 也算在 completion 內） |
 | `HISTORY_MAX_MESSAGES` | `30` | 每頻道保留的近期訊息數 |
-| `DAILY_COST_BUDGET` | `5` | 每日費用上限（人民幣元，依記錄的費用加總）；`0` = 不限制 |
+| `DAILY_COST_BUDGET` | `1` | 每日費用上限（人民幣元，依記錄的費用加總）；`0` = 不限制 |
 | `DAILY_TOKEN_BUDGET` | `0` | 每日 token 上限（輸入＋輸出，含命中快取的部分），選填；`0` = 不限制 |
 | `LORE_DIR` | `lore` | 原作資料資料夾；`none` = 不使用 |
 | `USER_COOLDOWN_SECONDS` | `5` | 同一使用者觸發的冷卻秒數 |
