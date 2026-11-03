@@ -110,7 +110,7 @@ async def test_interject_judge_yes(make_service, fake_openai):
 async def test_deep_uses_deep_model(make_service, fake_openai, storage):
     svc = make_service()
     reply = await svc.deep(500, "KO", "為什麼天空是藍的")
-    assert fake_openai.completions.calls[0]["model"] == "deepseek-v4-pro"
+    assert fake_openai.completions.calls[0]["model"] == svc.config.model_deep == "deepseek-flash"
     assert reply.recorded
     assert storage.count_messages(500) == 2
 

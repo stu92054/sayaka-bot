@@ -60,9 +60,21 @@ async def test_hanging_request_times_out_and_is_retried(make_service, fake_opena
 
 
 async def test_deep_uses_its_own_timeout(make_service, fake_openai):
-    svc = make_service(api_timeout_seconds=0.01, deep_api_timeout_seconds=5)
-    assert svc.llm.timeout_for(svc.config.model_default) == 0.01
-    assert svc.llm.timeout_for(svc.config.model_deep) == 5
+    # MODEL_DEEP 預設和 MODEL_DEFAULT 同一個模型：/deep 仍要用 DEEP_API_TIMEOUT_SECONDS，不能依模型名稱判斷
+    svc = make_service(api_timeout_seconds=5, deep_api_timeout_seconds=0.01)
+    assert svc.config.model_deep == svc.config.model_default
+    fake_openai.completions.replies = [HANG, "想好了"]
+    started = time.monotonic()
+    reply = await svc.deep(CH, "KO", "難題")
+    assert reply.chunks == ["想好了"] and time.monotonic() - started < 2  # 0.01 秒就逾時重試，不是等 5 秒
+    assert len(fake_openai.completions.calls) == 2
+
+
+def test_timeout_by_model_name_when_models_differ(storage, fake_openai):
+    from bot.llm import LLMClient
+    cfg = make_config(model_deep="deepseek-v4-pro", api_timeout_seconds=0.01, deep_api_timeout_seconds=5)
+    llm = LLMClient(cfg, storage, client=fake_openai)
+    assert llm.timeout_for(cfg.model_default) == 0.01 and llm.timeout_for(cfg.model_deep) == 5
 
 
 async def test_total_timeout_stops_retrying(make_service, fake_openai):

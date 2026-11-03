@@ -158,7 +158,7 @@ class Config:
     # 歷史紀錄與摘要中 bot 的名字
     bot_display_name: str = "沙耶香"
     model_default: str = "deepseek-flash"
-    model_deep: str = "deepseek-v4-pro"
+    model_deep: str = "deepseek-flash"
     # 兩個模型預設都開啟思考模式；一般聊天關閉以節省 token、降低延遲，/deep 開啟
     thinking_default: str = "disabled"
     thinking_deep: str = "enabled"
@@ -232,7 +232,7 @@ class Config:
             bot_names=_str_list(_get(env, "BOT_NAMES", "")),
             bot_display_name=_get(env, "BOT_DISPLAY_NAME", "沙耶香"),
             model_default=_get(env, "MODEL_DEFAULT", "deepseek-flash"),
-            model_deep=_get(env, "MODEL_DEEP", "deepseek-v4-pro"),
+            model_deep=_get(env, "MODEL_DEEP", "deepseek-flash"),
             thinking_default=_thinking(_get(env, "THINKING_DEFAULT", "disabled"), "THINKING_DEFAULT"),
             thinking_deep=_thinking(_get(env, "THINKING_DEEP", "enabled"), "THINKING_DEEP"),
             reasoning_effort_default=_effort(_get(env, "REASONING_EFFORT_DEFAULT", "low"), "REASONING_EFFORT_DEFAULT"),

@@ -134,6 +134,7 @@ class ChatService:
     async def generate(self, channel_id: int, prompt: list[dict[str, str]], trigger: Trigger,
                        *, model: str, purpose: str = "chat", max_tokens: int | None = None,
                        thinking: str | None = None, total_timeout: float | None = None,
+                       reasoning_effort: str | None = None, call_timeout: float | None = None,
                        tool_runner: ToolRunner | None = None) -> Reply:
         max_tokens = max_tokens or self.config.max_reply_tokens
         try:
@@ -142,7 +143,8 @@ class ChatService:
                                                       purpose=purpose, max_rounds=tool_runner.max_calls)
             else:
                 text = await self.llm.chat(prompt, model=model, max_tokens=max_tokens,
-                                           purpose=purpose, thinking=thinking, total_timeout=total_timeout)
+                                           purpose=purpose, thinking=thinking, total_timeout=total_timeout,
+                                           reasoning_effort=reasoning_effort, call_timeout=call_timeout)
         except BudgetExceeded:
             return Reply([self.replies["budget_exceeded"]], trigger, recorded=False)
         except LLMError:
@@ -167,10 +169,13 @@ class ChatService:
                                            now=self._now())
         self.history.add(channel_id, author, question)
         # 思考模式的推理內容也算在 max_tokens 內，所以 /deep 給較大的上限；
-        # 總時限要短於 Discord 互動的 15 分鐘，失敗時才來得及回覆錯誤訊息
+        # 總時限要短於 Discord 互動的 15 分鐘，失敗時才來得及回覆錯誤訊息。
+        # 思考模式、強度、單次逾時都明確指定，不靠模型名稱判斷（MODEL_DEEP 可以和一般聊天同一個模型）
         return await self.generate(channel_id, prompt, Trigger.MENTION, model=self.config.model_deep,
                                    purpose="deep", max_tokens=self.config.deep_max_tokens,
                                    thinking=self.config.thinking_deep,
+                                   reasoning_effort=self.config.reasoning_effort_deep,
+                                   call_timeout=self.config.deep_api_timeout_seconds,
                                    total_timeout=self.config.deep_total_timeout_seconds)
 
     def interject_allowed(self, channel_id: int) -> bool:

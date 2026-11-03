@@ -147,6 +147,8 @@ class LLMClient:
         """今日預估費用（幣別同 PRICE_CURRENCY）。每次呼叫時已依高峰／空閒時段算好並存入資料庫。"""
         return sum(r.cost for r in rows)
 
+    # 呼叫端沒有指定時，才依模型名稱決定思考模式／強度／逾時。
+    # /deep 會明確傳入自己的設定，所以 MODEL_DEEP 與 MODEL_DEFAULT 是同一個模型也沒關係。
     def _is_deep(self, model: str) -> bool:
         return model == self.config.model_deep and model != self.config.model_default
 
@@ -170,11 +172,13 @@ class LLMClient:
         thinking: str | None = None,
         reasoning_effort: str | None = None,
         total_timeout: float | None = None,
+        call_timeout: float | None = None,
     ) -> str:
-        """total_timeout：含重試與等待的總時限（秒）；None = 只受單次逾時與重試次數限制。"""
+        """total_timeout：含重試與等待的總時限（秒）；None = 只受單次逾時與重試次數限制。
+        call_timeout：單次呼叫的逾時；None = 依模型（timeout_for）。"""
         choice = await self._complete(messages, model=model, max_tokens=max_tokens, purpose=purpose,
                                       temperature=temperature, thinking=thinking, reasoning_effort=reasoning_effort,
-                                      total_timeout=total_timeout)
+                                      total_timeout=total_timeout, call_timeout=call_timeout)
         # 思維鏈在 message.reasoning_content；沒帶 tools 時下一輪不需回傳，只取最終回答
         return (getattr(choice.message, "content", None) or "").strip()
 
@@ -263,6 +267,7 @@ class LLMClient:
         total_timeout: float | None = None,
         tools: list[dict] | None = None,
         tool_choice: str | None = None,
+        call_timeout: float | None = None,
     ) -> Any:
         """呼叫 API（含預算檢查、單次逾時、總時限、重試、用量紀錄），回傳 choices[0]。
 
@@ -301,7 +306,7 @@ class LLMClient:
         detail = ""
         started = self._monotonic()
         for attempt in range(1, self.max_attempts + 1):
-            timeout = self.timeout_for(model)
+            timeout = call_timeout or self.timeout_for(model)
             if total_timeout is not None:
                 remaining = total_timeout - (self._monotonic() - started)
                 if remaining <= 0:

@@ -32,7 +32,7 @@
 
 | 指令 | 說明 | 權限 |
 | --- | --- | --- |
-| `/deep <問題>` | 用 `MODEL_DEEP`（預設 `deepseek-v4-pro`，開啟思考模式）回答 | 所有人 |
+| `/deep <問題>` | 用 `MODEL_DEEP`（預設 `deepseek-flash`）開啟思考模式、認真回答 | 所有人 |
 | `/reset` | 清除本頻道歷史與摘要 | 管理員 |
 | `/persona_reload` | 重新讀取 `persona.md`、`lore/` 與 `replies.toml` | 管理員 |
 | `/usage` | 今日 token 用量與預估費用 | 管理員 |
@@ -92,7 +92,7 @@ cp .env.example .env
 | `BOT_NAMES` | （空） | 訊息出現這些名字就會觸發（逗號分隔，不分大小寫）；留空 = 不使用名字觸發 |
 | `BOT_DISPLAY_NAME` | `沙耶香` | 對話歷史與摘要中 bot 的名字 |
 | `MODEL_DEFAULT` | `deepseek-flash` | 一般對話、摘要、插話判斷（舊名 `deepseek-v4-flash` 仍可用） |
-| `MODEL_DEEP` | `deepseek-v4-pro` | `/deep` 使用 |
+| `MODEL_DEEP` | `deepseek-flash` | `/deep` 使用（可以和 `MODEL_DEFAULT` 相同；`/deep` 一律開思考模式、用 `REASONING_EFFORT_DEEP` 與 `DEEP_*` 的設定）。想要更強可改 `deepseek-v4-pro`，費用約 3～7 倍 |
 | `THINKING_DEFAULT` | `disabled` | 一般對話的思考模式：`enabled` / `disabled` / `omit`（不送參數） |
 | `THINKING_DEEP` | `enabled` | `/deep` 的思考模式 |
 | `REASONING_EFFORT_DEFAULT` | `low` | 一般對話開啟思考時的強度（`low` / `high` / `max` / `omit` = 不送，模型預設 `high`） |
@@ -150,7 +150,7 @@ DeepSeek 的美元帳戶與人民幣帳戶價格不同（不是單純匯率換�
 
 每筆用量都會記下當時的幣別；每日預算只加總目前幣別的費用，中途切換幣別也不會把美元和人民幣加在一起。
 以美元帳戶估算：flash 一般聊天每次約 $0.0003～0.0006，`DAILY_COST_BUDGET=1` 約可回 1,700～3,300 則；
-`/deep`（pro＋思考模式）單次最多約 $0.03（高峰時段、用滿 `DEEP_MAX_TOKENS`）。
+`/deep`（flash＋思考模式）單次最多約 $0.01（高峰時段、用滿 `DEEP_MAX_TOKENS`）；改用 pro 則約 $0.03。
 
 **節假日資料**：自動從 [NateScarlet/holiday-cn](https://github.com/NateScarlet/holiday-cn)（每日抓取國務院公告）下載
 今年與明年的資料，啟動時在背景下載、之後每天更新一次，並快取在 `data/holidays/{年份}.json`。
