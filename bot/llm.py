@@ -66,10 +66,14 @@ class LLMClient:
         """今日預估費用（元）。每次呼叫時已依高峰／空閒時段算好並存入資料庫。"""
         return sum(r.cost for r in rows)
 
+    def _is_deep(self, model: str) -> bool:
+        return model == self.config.model_deep and model != self.config.model_default
+
     def thinking_for(self, model: str) -> str:
-        if model == self.config.model_deep and model != self.config.model_default:
-            return self.config.thinking_deep
-        return self.config.thinking_default
+        return self.config.thinking_deep if self._is_deep(model) else self.config.thinking_default
+
+    def effort_for(self, model: str) -> str:
+        return self.config.reasoning_effort_deep if self._is_deep(model) else self.config.reasoning_effort_default
 
     async def chat(
         self,
@@ -80,6 +84,7 @@ class LLMClient:
         purpose: str = "chat",
         temperature: float | None = None,
         thinking: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> str:
         if self.over_budget():
             raise BudgetExceeded()
@@ -89,10 +94,15 @@ class LLMClient:
             "messages": messages,
             "max_tokens": max_tokens or self.config.max_reply_tokens,
         }
+        # 思考模式透過 extra_body 傳入（OpenAI SDK 沒有 thinking 參數）；模型預設是開啟
         thinking = thinking or self.thinking_for(model)
         if thinking != "omit":
             kwargs["extra_body"] = {"thinking": {"type": thinking}}
-        # 思考模式不支援 temperature 等取樣參數
+        if thinking != "disabled":
+            effort = reasoning_effort or self.effort_for(model)
+            if effort != "omit":
+                kwargs["reasoning_effort"] = effort
+        # 思考模式不支援 temperature（傳了不報錯但不生效），只在非思考模式送出
         if temperature is not None and thinking == "disabled":
             kwargs["temperature"] = temperature
 
@@ -108,6 +118,7 @@ class LLMClient:
                     await self._sleep(self.base_delay * (2 ** (attempt - 1)))
                 continue
             self._record(model, purpose, getattr(resp, "usage", None))
+            # 思維鏈在 message.reasoning_content；沒帶 tools 時下一輪不需回傳，只取最終回答
             try:
                 content = resp.choices[0].message.content or ""
             except (AttributeError, IndexError):

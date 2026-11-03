@@ -34,6 +34,8 @@ FALLBACK_PRICE = _FLASH
 PRICING_TZ = ZoneInfo("Asia/Shanghai")
 PEAK_HOURS = ((9, 12), (14, 18))
 THINKING_CHOICES = ("enabled", "disabled", "omit")
+# DeepSeek 會把 minimal→low、medium/xhigh→high、ultra→max；omit = 不送參數（模型預設 high）
+EFFORT_CHOICES = ("minimal", "low", "medium", "high", "xhigh", "max", "ultra", "omit")
 
 
 def _strip_comment(value: str) -> str:
@@ -75,6 +77,13 @@ def _thinking(value: str, key: str) -> str:
     return value
 
 
+def _effort(value: str, key: str) -> str:
+    value = value.lower()
+    if value not in EFFORT_CHOICES:
+        raise ValueError(f"{key} 必須是 {'/'.join(EFFORT_CHOICES)} 之一")
+    return value
+
+
 def _price_table(value: str) -> dict[str, ModelPrice]:
     """格式：model:hit:miss:output;model2:hit:miss:output"""
     prices = dict(DEFAULT_PRICES)
@@ -99,6 +108,9 @@ class Config:
     # 兩個模型預設都開啟思考模式；一般聊天關閉以節省 token、降低延遲，/deep 開啟
     thinking_default: str = "disabled"
     thinking_deep: str = "enabled"
+    # 思考強度，只在思考模式開啟時送出
+    reasoning_effort_default: str = "low"
+    reasoning_effort_deep: str = "high"
     deep_max_tokens: int = 8000
     history_max_messages: int = 30
     daily_token_budget: int = 2_000_000
@@ -130,6 +142,8 @@ class Config:
             model_deep=_get(env, "MODEL_DEEP", "deepseek-v4-pro"),
             thinking_default=_thinking(_get(env, "THINKING_DEFAULT", "disabled"), "THINKING_DEFAULT"),
             thinking_deep=_thinking(_get(env, "THINKING_DEEP", "enabled"), "THINKING_DEEP"),
+            reasoning_effort_default=_effort(_get(env, "REASONING_EFFORT_DEFAULT", "low"), "REASONING_EFFORT_DEFAULT"),
+            reasoning_effort_deep=_effort(_get(env, "REASONING_EFFORT_DEEP", "high"), "REASONING_EFFORT_DEEP"),
             deep_max_tokens=int(_get(env, "DEEP_MAX_TOKENS", "8000")),
             history_max_messages=int(_get(env, "HISTORY_MAX_MESSAGES", "30")),
             daily_token_budget=int(_get(env, "DAILY_TOKEN_BUDGET", "2000000")),

@@ -105,7 +105,30 @@ async def test_thinking_disabled_for_chat_enabled_for_deep(make_service, fake_op
     assert call["model"] == "deepseek-v4-pro"
     assert call["extra_body"] == {"thinking": {"type": "enabled"}}
     assert call["max_tokens"] == 8000
+    assert call["reasoning_effort"] == "high"
     assert "temperature" not in call
+
+
+async def test_no_reasoning_effort_when_thinking_disabled(make_service, fake_openai):
+    svc = make_service()
+    await svc.llm.chat([{"role": "user", "content": "hi"}])
+    assert "reasoning_effort" not in fake_openai.completions.calls[-1]
+
+
+async def test_effort_configurable_and_omittable(make_service, fake_openai):
+    svc = make_service(thinking_default="enabled", reasoning_effort_default="max")
+    await svc.llm.chat([{"role": "user", "content": "hi"}], temperature=0)
+    call = fake_openai.completions.calls[-1]
+    assert call["reasoning_effort"] == "max" and "temperature" not in call
+    svc = make_service(thinking_default="enabled", reasoning_effort_default="omit")
+    await svc.llm.chat([{"role": "user", "content": "hi"}])
+    assert "reasoning_effort" not in fake_openai.completions.calls[-1]
+
+
+def test_invalid_effort_rejected():
+    from bot.config import Config
+    with pytest.raises(ValueError):
+        Config.from_env({"REASONING_EFFORT_DEEP": "turbo"})
 
 
 async def test_thinking_omit_sends_no_extra_body(make_service, fake_openai):
