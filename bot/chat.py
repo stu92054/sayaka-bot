@@ -8,7 +8,8 @@ from typing import Any, Callable
 
 from .config import Config
 from .history import HistoryManager
-from .llm import BUDGET_EXCEEDED_REPLY, ERROR_REPLY, BudgetExceeded, LLMClient, LLMError
+from .llm import (BUDGET_EXCEEDED_REPLY, CONTENT_FILTER_REPLY, ERROR_REPLY, BudgetExceeded, ContentFiltered,
+                  LLMClient, LLMError)
 from .persona import Persona
 from .text import split_message
 from .triggers import Cooldown, Trigger, detect_trigger, is_ignored
@@ -97,6 +98,8 @@ class ChatService:
             return Reply([BUDGET_EXCEEDED_REPLY], trigger, recorded=False)
         except LLMError:
             return Reply([ERROR_REPLY], trigger, recorded=False)
+        except ContentFiltered:
+            return Reply([CONTENT_FILTER_REPLY], trigger, recorded=False)
         if not text:
             return Reply([ERROR_REPLY], trigger, recorded=False)
         self.history.add(channel_id, self.bot_display_name, text, is_bot=True)
@@ -128,7 +131,7 @@ class ChatService:
                 temperature=0,
                 thinking="disabled",  # 只要一個字，不能讓推理吃掉 max_tokens
             )
-        except (BudgetExceeded, LLMError):
+        except (BudgetExceeded, LLMError, ContentFiltered):
             return False
         return answer.strip().startswith("是")
 

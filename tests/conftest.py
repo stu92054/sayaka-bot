@@ -25,7 +25,7 @@ ADMIN_ID = 7
 class FakeCompletions:
     def __init__(self):
         self.calls: list[dict] = []
-        self.replies: list = []  # str 或 Exception，依序取用；空了就回 default
+        self.replies: list = []  # str、(str, finish_reason) 或 Exception，依序取用；空了就回 default
         self.default = "哼，才不是特地回你的。"
         self.usage = dict(prompt_tokens=100, completion_tokens=20,
                           prompt_cache_hit_tokens=60, prompt_cache_miss_tokens=40)
@@ -35,8 +35,11 @@ class FakeCompletions:
         item = self.replies.pop(0) if self.replies else self.default
         if isinstance(item, Exception):
             raise item
+        finish = "stop"
+        if isinstance(item, tuple):  # (content, finish_reason)
+            item, finish = item
         return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=item))],
+            choices=[SimpleNamespace(message=SimpleNamespace(content=item), finish_reason=finish)],
             usage=SimpleNamespace(**self.usage),
         )
 

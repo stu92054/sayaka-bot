@@ -16,6 +16,10 @@ log = logging.getLogger(__name__)
 
 BUDGET_EXCEEDED_REPLY = "哼，本小姐今天說太多話了，明天再說吧。"
 ERROR_REPLY = "……本小姐現在沒心情說話，等一下再來。（連線出了點問題）"
+CONTENT_FILTER_REPLY = "哼，這種話本小姐才不說呢。"
+
+# finish_reason 為這些值時表示生成被打斷，視同失敗並重試
+RETRYABLE_FINISH_REASONS = {"insufficient_system_resource", "aborted"}
 
 
 class BudgetExceeded(Exception):
@@ -24,6 +28,14 @@ class BudgetExceeded(Exception):
 
 class LLMError(Exception):
     """重試後仍然失敗。"""
+
+
+class ContentFiltered(Exception):
+    """輸出被 DeepSeek 內容過濾（finish_reason=content_filter）。"""
+
+
+class _Interrupted(Exception):
+    pass
 
 
 class LLMClient:
@@ -110,20 +122,28 @@ class LLMClient:
         for attempt in range(1, self.max_attempts + 1):
             try:
                 resp = await self.client.chat.completions.create(**kwargs)
+                self._record(model, purpose, getattr(resp, "usage", None))
+                choice = resp.choices[0]
+                finish = getattr(choice, "finish_reason", None)
+                if finish in RETRYABLE_FINISH_REASONS:
+                    raise _Interrupted(finish)
             except Exception as exc:  # noqa: BLE001 - 任何 API/網路錯誤都要重試
                 last_exc = exc
                 log.warning("DeepSeek 呼叫失敗（第 %d/%d 次，%s）：%s",
-                            attempt, self.max_attempts, purpose, type(exc).__name__)
+                            attempt, self.max_attempts, purpose,
+                            f"finish_reason={exc}" if isinstance(exc, _Interrupted) else type(exc).__name__)
                 if attempt < self.max_attempts:
                     await self._sleep(self.base_delay * (2 ** (attempt - 1)))
                 continue
-            self._record(model, purpose, getattr(resp, "usage", None))
+            if finish == "content_filter":
+                raise ContentFiltered()
             # 思維鏈在 message.reasoning_content；沒帶 tools 時下一輪不需回傳，只取最終回答
-            try:
-                content = resp.choices[0].message.content or ""
-            except (AttributeError, IndexError):
-                content = ""
-            return content.strip()
+            content = (getattr(choice.message, "content", None) or "").strip()
+            if finish == "length":
+                # 推理內容也算在 max_tokens 內，思考太久可能沒有留下最終回答
+                log.warning("回覆達到 max_tokens 上限（%s，max_tokens=%s，最終回答 %d 字）",
+                            purpose, kwargs["max_tokens"], len(content))
+            return content
         raise LLMError(f"DeepSeek 呼叫失敗：{type(last_exc).__name__}") from last_exc
 
     def _record(self, model: str, purpose: str, usage: Any) -> None:
@@ -131,12 +151,18 @@ class LLMClient:
             return
         prompt = int(getattr(usage, "prompt_tokens", 0) or 0)
         completion = int(getattr(usage, "completion_tokens", 0) or 0)
-        hit = int(getattr(usage, "prompt_cache_hit_tokens", 0) or 0)
+        hit = getattr(usage, "prompt_cache_hit_tokens", None)
+        if hit is None:  # 與 prompt_tokens_details.cached_tokens 相同
+            hit = getattr(getattr(usage, "prompt_tokens_details", None), "cached_tokens", None)
+        hit = int(hit or 0)
         miss = getattr(usage, "prompt_cache_miss_tokens", None)
         miss = int(miss) if miss is not None else max(prompt - hit, 0)
+        reasoning = getattr(getattr(usage, "completion_tokens_details", None), "reasoning_tokens", None)
+        reasoning = int(reasoning or 0)
         now = self._now()
         peak = self.config.is_peak(now)
         cost = self.config.call_cost(model, hit, miss, completion, now)
-        self.storage.record_usage(self.today(), model, purpose, prompt, completion, hit, miss, cost=cost, peak=peak)
-        log.info("用量 %s/%s：in=%d (hit=%d) out=%d ¥%.5f%s", model, purpose, prompt, hit, completion, cost,
-                 "（高峰）" if peak else "")
+        self.storage.record_usage(self.today(), model, purpose, prompt, completion, hit, miss, cost=cost, peak=peak,
+                                  reasoning_tokens=reasoning)
+        log.info("用量 %s/%s：in=%d (hit=%d) out=%d (推理 %d) ¥%.5f%s", model, purpose, prompt, hit, completion,
+                 reasoning, cost, "（高峰）" if peak else "")

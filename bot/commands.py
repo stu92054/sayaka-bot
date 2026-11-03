@@ -32,7 +32,9 @@ def format_usage(bot: "TsundereBot") -> str:
         hit_rate = r.cache_hit_tokens / r.prompt_tokens if r.prompt_tokens else 0
         lines.append(
             f"- `{r.model}`：{r.calls} 次，輸入 {r.prompt_tokens:,}（快取命中 {r.cache_hit_tokens:,}，{hit_rate:.0%}），"
-            f"輸出 {r.completion_tokens:,}，約 ¥{r.cost:.4f}"
+            f"輸出 {r.completion_tokens:,}"
+            + (f"（推理 {r.reasoning_tokens:,}）" if r.reasoning_tokens else "")
+            + f"，約 ¥{r.cost:.4f}"
         )
     lines.append(f"預估費用：約 ¥{bot.llm.estimate_cost(rows):.4f}（依 DeepSeek 價目表，已區分高峰／空閒時段）")
     now = bot.llm.now()

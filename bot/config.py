@@ -34,8 +34,9 @@ FALLBACK_PRICE = _FLASH
 PRICING_TZ = ZoneInfo("Asia/Shanghai")
 PEAK_HOURS = ((9, 12), (14, 18))
 THINKING_CHOICES = ("enabled", "disabled", "omit")
-# DeepSeek 會把 minimal→low、medium/xhigh→high、ultra→max；omit = 不送參數（模型預設 high）
-EFFORT_CHOICES = ("minimal", "low", "medium", "high", "xhigh", "max", "ultra", "omit")
+# API 規格的 reasoning_effort 列舉值為 none/low/high/max（none = 關閉思考，請改用 THINKING_*=disabled）
+# omit = 不送參數（模型預設 high）
+EFFORT_CHOICES = ("low", "high", "max", "omit")
 
 
 def _strip_comment(value: str) -> str:

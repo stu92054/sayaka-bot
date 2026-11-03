@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS usage (
     cache_hit_tokens INTEGER NOT NULL,
     cache_miss_tokens INTEGER NOT NULL,
     peak INTEGER NOT NULL DEFAULT 0,
-    cost REAL NOT NULL DEFAULT 0
+    cost REAL NOT NULL DEFAULT 0,
+    reasoning_tokens INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_usage_day ON usage(day);
 """
@@ -59,6 +60,7 @@ class UsageRow:
     cache_hit_tokens: int
     cache_miss_tokens: int
     cost: float = 0.0
+    reasoning_tokens: int = 0
 
     @property
     def total_tokens(self) -> int:
@@ -74,9 +76,10 @@ class Storage:
         with self._lock:
             self._conn.executescript(SCHEMA)
             cols = {r[1] for r in self._conn.execute("PRAGMA table_info(usage)")}
-            if "cost" not in cols:  # 舊版資料庫升級
-                self._conn.execute("ALTER TABLE usage ADD COLUMN peak INTEGER NOT NULL DEFAULT 0")
-                self._conn.execute("ALTER TABLE usage ADD COLUMN cost REAL NOT NULL DEFAULT 0")
+            for col, ddl in (("peak", "INTEGER NOT NULL DEFAULT 0"), ("cost", "REAL NOT NULL DEFAULT 0"),
+                             ("reasoning_tokens", "INTEGER NOT NULL DEFAULT 0")):
+                if col not in cols:  # 舊版資料庫升級
+                    self._conn.execute(f"ALTER TABLE usage ADD COLUMN {col} {ddl}")
             self._conn.commit()
 
     def close(self) -> None:
@@ -154,13 +157,14 @@ class Storage:
         cache_miss_tokens: int,
         cost: float = 0.0,
         peak: bool = False,
+        reasoning_tokens: int = 0,
     ) -> None:
         with self._lock:
             self._conn.execute(
                 "INSERT INTO usage(day, created_at, model, purpose, prompt_tokens, completion_tokens, "
-                "cache_hit_tokens, cache_miss_tokens, peak, cost) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "cache_hit_tokens, cache_miss_tokens, peak, cost, reasoning_tokens) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (day, time.time(), model, purpose, prompt_tokens, completion_tokens, cache_hit_tokens,
-                 cache_miss_tokens, int(peak), cost),
+                 cache_miss_tokens, int(peak), cost, reasoning_tokens),
             )
             self._conn.commit()
 
@@ -175,7 +179,7 @@ class Storage:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT model, COUNT(*), SUM(prompt_tokens), SUM(completion_tokens), SUM(cache_hit_tokens), "
-                "SUM(cache_miss_tokens), SUM(cost) FROM usage WHERE day=? GROUP BY model ORDER BY model",
+                "SUM(cache_miss_tokens), SUM(cost), SUM(reasoning_tokens) FROM usage WHERE day=? GROUP BY model ORDER BY model",
                 (day,),
             ).fetchall()
-        return [UsageRow(r[0], int(r[1]), int(r[2]), int(r[3]), int(r[4]), int(r[5]), float(r[6])) for r in rows]
+        return [UsageRow(r[0], int(r[1]), int(r[2]), int(r[3]), int(r[4]), int(r[5]), float(r[6]), int(r[7])) for r in rows]

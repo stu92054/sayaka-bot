@@ -5,7 +5,7 @@ import asyncio
 import logging
 from collections import defaultdict
 
-from .llm import BudgetExceeded, LLMClient, LLMError
+from .llm import BudgetExceeded, ContentFiltered, LLMClient, LLMError
 from .storage import Storage, StoredMessage
 
 log = logging.getLogger(__name__)
@@ -111,7 +111,7 @@ class HistoryManager:
                     purpose="summary",
                     thinking="disabled",
                 )
-            except (BudgetExceeded, LLMError) as exc:
+            except (BudgetExceeded, LLMError, ContentFiltered) as exc:
                 log.warning("頻道 %s 摘要失敗：%s", channel_id, type(exc).__name__)
                 self._hard_trim(channel_id, count)
                 return False

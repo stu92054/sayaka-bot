@@ -81,9 +81,9 @@ cp .env.example .env
 | `MODEL_DEEP` | `deepseek-v4-pro` | `/deep` 使用 |
 | `THINKING_DEFAULT` | `disabled` | 一般對話的思考模式：`enabled` / `disabled` / `omit`（不送參數） |
 | `THINKING_DEEP` | `enabled` | `/deep` 的思考模式 |
-| `REASONING_EFFORT_DEFAULT` | `low` | 一般對話開啟思考時的強度（`low` / `high` / `max` / `omit`） |
+| `REASONING_EFFORT_DEFAULT` | `low` | 一般對話開啟思考時的強度（`low` / `high` / `max` / `omit` = 不送，模型預設 `high`） |
 | `REASONING_EFFORT_DEEP` | `high` | `/deep` 的思考強度 |
-| `DEEP_MAX_TOKENS` | `8000` | `/deep` 的 max_tokens（推理內容也算在內） |
+| `DEEP_MAX_TOKENS` | `8000` | `/deep` 的 max_tokens（推理 tokens 也算在 completion 內） |
 | `HISTORY_MAX_MESSAGES` | `30` | 每頻道保留的近期訊息數 |
 | `DAILY_TOKEN_BUDGET` | `2000000` | 每日 token 上限（input + output） |
 | `USER_COOLDOWN_SECONDS` | `5` | 同一使用者觸發的冷卻秒數 |
@@ -118,6 +118,17 @@ cp .env.example .env
 - `/deep`：`thinking: enabled`、`reasoning_effort=high`，並使用較大的 `DEEP_MAX_TOKENS`。
 - 思考模式下 `temperature` 不生效，所以只在關閉思考時才送出。
 - bot 沒有使用 tools，思維鏈（`reasoning_content`）不需要回傳，也不會存進歷史，只保留最終回答。
+- 推理 tokens 算在 `completion_tokens` 內（`completion_tokens_details.reasoning_tokens`），會佔用 `max_tokens`；
+  `/usage` 會另外顯示推理 tokens。若推理用光上限而沒有最終回答，會回固定錯誤訊息並在 log 提示調高 `DEEP_MAX_TOKENS`。
+
+### 回應狀態（finish_reason）
+
+| finish_reason | 處理 |
+| --- | --- |
+| `stop` | 正常回覆 |
+| `length` | 回覆已產生的部分；若沒有內容則回固定錯誤訊息 |
+| `content_filter` | 回固定的拒絕訊息（不重試、不寫入歷史） |
+| `insufficient_system_resource`、`aborted` | 視同失敗，指數退避重試 |
 
 ## 4. 執行方式
 

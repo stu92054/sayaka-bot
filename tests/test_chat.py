@@ -1,4 +1,4 @@
-from bot.llm import BUDGET_EXCEEDED_REPLY, ERROR_REPLY
+from bot.llm import BUDGET_EXCEEDED_REPLY, CONTENT_FILTER_REPLY, ERROR_REPLY
 from bot.triggers import Trigger
 
 from .conftest import BOT_ID, OTHER_GUILD_ID, make_message
@@ -126,3 +126,18 @@ async def test_persona_reload(make_service, fake_openai, persona_file):
     svc.persona.reload()
     await svc.handle_message(make_message("大小姐"), BOT_ID)
     assert fake_openai.completions.calls[0]["messages"][0]["content"] == "新的人設"
+
+
+async def test_content_filter_gets_fixed_reply_not_recorded(make_service, fake_openai, storage):
+    svc = make_service()
+    fake_openai.completions.replies = [("", "content_filter")]
+    reply = await svc.handle_message(make_message("大小姐"), BOT_ID)
+    assert reply.chunks == [CONTENT_FILTER_REPLY] and not reply.recorded
+    assert all(not m.is_bot for m in storage.recent_messages(500, 10))
+
+
+async def test_deep_thinking_exhausts_tokens_gives_error_reply(make_service, fake_openai):
+    svc = make_service()
+    fake_openai.completions.replies = [("", "length")]
+    reply = await svc.deep(500, "KO", "超難的問題")
+    assert reply.chunks == [ERROR_REPLY]

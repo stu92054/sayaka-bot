@@ -6,7 +6,9 @@ from bot.storage import Storage
 
 from .conftest import TAIPEI
 
-from bot.llm import BudgetExceeded, LLMError
+from types import SimpleNamespace
+
+from bot.llm import BudgetExceeded, ContentFiltered, LLMError
 
 
 async def test_records_usage_including_cache_hits(make_service, fake_openai, storage):
@@ -127,8 +129,9 @@ async def test_effort_configurable_and_omittable(make_service, fake_openai):
 
 def test_invalid_effort_rejected():
     from bot.config import Config
-    with pytest.raises(ValueError):
-        Config.from_env({"REASONING_EFFORT_DEEP": "turbo"})
+    for bad in ("turbo", "medium", "none"):
+        with pytest.raises(ValueError):
+            Config.from_env({"REASONING_EFFORT_DEEP": bad})
 
 
 async def test_thinking_omit_sends_no_extra_body(make_service, fake_openai):
@@ -149,3 +152,39 @@ def test_storage_migrates_old_usage_table(tmp_path):
     s.record_usage("2026-11-03", "deepseek-flash", "chat", 1, 1, 0, 1, cost=0.5)
     assert s.usage_by_model("2026-11-03")[0].cost == 0.5
     s.close()
+
+
+async def test_interrupted_finish_reason_is_retried(make_service, fake_openai):
+    svc = make_service()
+    fake_openai.completions.replies = [("", "insufficient_system_resource"), ("半", "aborted"), "完整回答"]
+    assert await svc.llm.chat([{"role": "user", "content": "hi"}]) == "完整回答"
+    assert len(fake_openai.completions.calls) == 3
+    assert svc.llm.sleeps == [1.0, 2.0]
+    # 被打斷的呼叫仍有消耗 token，照樣記錄
+    assert svc.llm.usage_today()[0].calls == 3
+
+
+async def test_content_filter_raises(make_service, fake_openai):
+    svc = make_service()
+    fake_openai.completions.replies = [("", "content_filter")]
+    with pytest.raises(ContentFiltered):
+        await svc.llm.chat([{"role": "user", "content": "hi"}])
+    assert len(fake_openai.completions.calls) == 1  # 不重試
+
+
+async def test_length_returns_partial_content(make_service, fake_openai):
+    svc = make_service()
+    fake_openai.completions.replies = [("說到一半", "length")]
+    assert await svc.llm.chat([{"role": "user", "content": "hi"}]) == "說到一半"
+
+
+async def test_records_reasoning_tokens_and_cached_tokens_fallback(make_service, fake_openai):
+    svc = make_service()
+    fake_openai.completions.usage = dict(
+        prompt_tokens=100, completion_tokens=50,
+        prompt_tokens_details=SimpleNamespace(cached_tokens=80),
+        completion_tokens_details=SimpleNamespace(reasoning_tokens=30),
+    )
+    await svc.llm.chat([{"role": "user", "content": "hi"}])
+    r = svc.llm.usage_today()[0]
+    assert (r.cache_hit_tokens, r.cache_miss_tokens, r.reasoning_tokens) == (80, 20, 30)
