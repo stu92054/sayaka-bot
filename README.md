@@ -267,6 +267,8 @@ pytest
 測試完全使用 mock，不會連到 Discord 或 DeepSeek。涵蓋：觸發規則、冷卻、歷史裁切與摘要觸發、訊息分段、預算超限（費用與 token）、原作資料載入與 prompt 順序、
 重試（含不可重試的錯誤）、用量紀錄、log 遮蔽、replies.toml 載入與缺項處理、/deep 不允許提及等。
 
+上線前在真實 Discord 伺服器上的手動測試清單，以及部署到雲端主機的步驟，請見 [docs/testing.md](docs/testing.md)。
+
 ## 專案結構
 
 ```
@@ -284,6 +286,7 @@ bot/
   lore.py       # lore/ 原作資料載入
   holidays.py   # 中國節假日／調休資料（判斷高峰時段）
   text.py       # 2000 字元分段
+docs/testing.md # 上線前測試清單與部署步驟
 persona.md
 replies.toml
 lore/          # 原作資料（整份放進 prompt）
