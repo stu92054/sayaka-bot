@@ -1,0 +1,25 @@
+# systemd 範例：複製到 /etc/systemd/system/tsundere-bot.service
+# 假設專案放在 /opt/tsundere-bot，並已建立 .venv 與 .env
+[Unit]
+Description=Tsundere Ojousama Discord bot (DeepSeek)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=botuser
+Group=botuser
+WorkingDirectory=/opt/tsundere-bot
+EnvironmentFile=/opt/tsundere-bot/.env
+ExecStart=/opt/tsundere-bot/.venv/bin/python -m bot.main
+Restart=on-failure
+RestartSec=10
+# 基本加固
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/tsundere-bot/data
+
+[Install]
+WantedBy=multi-user.target
