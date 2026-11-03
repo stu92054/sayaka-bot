@@ -182,6 +182,14 @@ class Config:
     user_cooldown_seconds: float = 5.0
     max_reply_tokens: int = 600
     random_interject_rate: float = 0.0
+    # 插話控制：訊息出現這些話題時改用 interject_keyword_rate（取兩者較高者）
+    interject_keywords: tuple[str, ...] = ()
+    interject_keyword_rate: float = 0.3
+    # 判斷模型認為「現在插話自然」的機率要超過這個門檻才插話
+    interject_threshold: float = 0.7
+    # 同一頻道在她上次發言後幾分鐘內不插話；每頻道每小時最多插話幾次（0 = 不限制）
+    interject_channel_cooldown_minutes: float = 10.0
+    interject_max_per_hour: int = 3
     deepseek_base_url: str = "https://api.deepseek.com"
     persona_path: Path = Path("persona.md")
     replies_path: Path = Path("replies.toml")
@@ -232,6 +240,11 @@ class Config:
             user_cooldown_seconds=float(_get(env, "USER_COOLDOWN_SECONDS", "5")),
             max_reply_tokens=int(_get(env, "MAX_REPLY_TOKENS", "600")),
             random_interject_rate=float(_get(env, "RANDOM_INTERJECT_RATE", "0")),
+            interject_keywords=_str_list(_get(env, "INTERJECT_KEYWORDS", "")),
+            interject_keyword_rate=float(_get(env, "INTERJECT_KEYWORD_RATE", "0.3")),
+            interject_threshold=float(_get(env, "INTERJECT_THRESHOLD", "0.7")),
+            interject_channel_cooldown_minutes=float(_get(env, "INTERJECT_CHANNEL_COOLDOWN_MINUTES", "10")),
+            interject_max_per_hour=int(_get(env, "INTERJECT_MAX_PER_HOUR", "3")),
             deepseek_base_url=_get(env, "DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
             persona_path=Path(_get(env, "PERSONA_PATH", "persona.md")),
             replies_path=Path(_get(env, "REPLIES_PATH", "replies.toml")),
@@ -260,6 +273,10 @@ class Config:
             problems.append("HISTORY_MAX_MESSAGES 至少要 2")
         if not 0 <= self.random_interject_rate <= 1:
             problems.append("RANDOM_INTERJECT_RATE 必須介於 0 和 1")
+        if not 0 <= self.interject_keyword_rate <= 1:
+            problems.append("INTERJECT_KEYWORD_RATE 必須介於 0 和 1")
+        if not 0 <= self.interject_threshold <= 1:
+            problems.append("INTERJECT_THRESHOLD 必須介於 0 和 1")
         if min(self.api_timeout_seconds, self.deep_api_timeout_seconds, self.deep_total_timeout_seconds) <= 0:
             problems.append("API_TIMEOUT_SECONDS、DEEP_API_TIMEOUT_SECONDS、DEEP_TOTAL_TIMEOUT_SECONDS 必須大於 0")
         if self.deep_total_timeout_seconds >= 900:

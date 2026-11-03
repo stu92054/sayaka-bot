@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from datetime import datetime
 from typing import Any, Awaitable, Callable
@@ -168,6 +169,49 @@ class LLMClient:
         total_timeout: float | None = None,
     ) -> str:
         """total_timeout：含重試與等待的總時限（秒）；None = 只受單次逾時與重試次數限制。"""
+        choice = await self._complete(messages, model=model, max_tokens=max_tokens, purpose=purpose,
+                                      temperature=temperature, thinking=thinking, reasoning_effort=reasoning_effort,
+                                      total_timeout=total_timeout)
+        # 思維鏈在 message.reasoning_content；沒帶 tools 時下一輪不需回傳，只取最終回答
+        return (getattr(choice.message, "content", None) or "").strip()
+
+    async def yes_probability(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str | None = None,
+        purpose: str = "judge",
+        yes: tuple[str, ...] = ("是",),
+        no: tuple[str, ...] = ("否",),
+        total_timeout: float | None = None,
+    ) -> float:
+        """讓模型回答一個字（是／否），用 logprobs 算出回答「是」的機率（0～1）。
+
+        沒有 logprobs 時退回看回答的文字：「是」= 1、其他 = 0。
+        """
+        choice = await self._complete(messages, model=model, max_tokens=1, purpose=purpose, temperature=0,
+                                      thinking="disabled", logprobs=True, expect_truncation=True,
+                                      total_timeout=total_timeout)
+        return yes_probability_from(choice, yes, no)
+
+    async def _complete(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str | None,
+        max_tokens: int | None,
+        purpose: str,
+        temperature: float | None = None,
+        thinking: str | None = None,
+        reasoning_effort: str | None = None,
+        logprobs: bool = False,
+        expect_truncation: bool = False,
+        total_timeout: float | None = None,
+    ) -> Any:
+        """呼叫 API（含預算檢查、單次逾時、總時限、重試、用量紀錄），回傳 choices[0]。
+
+        chat 與 yes_probability 都經過這裡，所以插話判斷也有逾時保護。
+        """
         reason = self.budget_status()
         if reason is not None:
             log.warning("超過每日預算，不呼叫 API（%s）：%s", purpose, reason)
@@ -189,6 +233,9 @@ class LLMClient:
         # 思考模式不支援 temperature（傳了不報錯但不生效），只在非思考模式送出
         if temperature is not None and thinking == "disabled":
             kwargs["temperature"] = temperature
+        if logprobs:
+            kwargs["logprobs"] = True
+            kwargs["top_logprobs"] = 10
 
         last_exc: Exception | None = None
         detail = ""
@@ -229,13 +276,12 @@ class LLMClient:
                 continue
             if finish == "content_filter":
                 raise ContentFiltered()
-            # 思維鏈在 message.reasoning_content；沒帶 tools 時下一輪不需回傳，只取最終回答
-            content = (getattr(choice.message, "content", None) or "").strip()
-            if finish == "length":
+            if finish == "length" and not expect_truncation:
                 # 推理內容也算在 max_tokens 內，思考太久可能沒有留下最終回答
+                content = (getattr(choice.message, "content", None) or "").strip()
                 log.warning("回覆達到 max_tokens 上限（%s，max_tokens=%s，最終回答 %d 字）",
                             purpose, kwargs["max_tokens"], len(content))
-            return content
+            return choice
         raise LLMError(f"DeepSeek 呼叫失敗：{detail if last_exc is not None else '超過總時限'}") from last_exc
 
     def _record(self, model: str, purpose: str, usage: Any) -> None:
@@ -258,3 +304,24 @@ class LLMClient:
                                   reasoning_tokens=reasoning, currency=self.config.price_currency)
         log.info("用量 %s/%s：in=%d (hit=%d) out=%d (推理 %d) %s%s", model, purpose, prompt, hit, completion,
                  reasoning, self.config.money(cost, 6), "（高峰）" if peak else "")
+
+
+def yes_probability_from(choice: Any, yes: tuple[str, ...], no: tuple[str, ...]) -> float:
+    """從第一個 token 的 top_logprobs 算 P(是) / (P(是) + P(否))。"""
+    content = getattr(getattr(choice, "logprobs", None), "content", None)
+    if content:
+        first = content[0]
+        candidates = list(getattr(first, "top_logprobs", None) or []) or [first]
+        p_yes = p_no = 0.0
+        for c in candidates:
+            token = (getattr(c, "token", "") or "").strip()
+            prob = math.exp(getattr(c, "logprob", -math.inf))
+            if token and token.startswith(yes):
+                p_yes += prob
+            elif token and token.startswith(no):
+                p_no += prob
+        if p_yes + p_no > 0:
+            return p_yes / (p_yes + p_no)
+    # 沒有 logprobs，或候選中找不到是／否（例如 token 被切成位元組）：看回答文字
+    text = (getattr(getattr(choice, "message", None), "content", None) or "").strip()
+    return 1.0 if text.startswith(yes) else 0.0

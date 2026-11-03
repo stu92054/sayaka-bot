@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from types import SimpleNamespace
@@ -29,7 +30,8 @@ HANG = object()  # 模擬 DeepSeek 排隊時一直保持連線、遲遲不回應
 class FakeCompletions:
     def __init__(self):
         self.calls: list[dict] = []
-        # str、(str, finish_reason)、Exception、HANG 或 SimpleNamespace（原樣回傳的回應物件），依序取用；空了就回 default
+        # str、(str, finish_reason)、dict（含 logprobs）、Exception、HANG 或 SimpleNamespace（原樣回傳的回應物件），
+        # 依序取用；空了就回 default
         self.replies: list = []
         self.default = "哼，才不是特地回你的。"
         self.usage = dict(prompt_tokens=100, completion_tokens=20,
@@ -45,10 +47,18 @@ class FakeCompletions:
         if isinstance(item, SimpleNamespace):
             return item
         finish = "stop"
+        logprobs = None
         if isinstance(item, tuple):  # (content, finish_reason)
             item, finish = item
+        elif isinstance(item, dict):  # {"content", "finish", "top": [(token, 機率), ...]}（第一個 token 的候選）
+            top = [SimpleNamespace(token=t, logprob=math.log(p)) for t, p in item.get("top", [])]
+            logprobs = SimpleNamespace(content=[SimpleNamespace(
+                token=top[0].token if top else "", logprob=top[0].logprob if top else 0.0, top_logprobs=top)])
+            finish = item.get("finish", "stop")
+            item = item.get("content", top[0].token if top else "")
         return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=item), finish_reason=finish)],
+            choices=[SimpleNamespace(message=SimpleNamespace(content=item), finish_reason=finish,
+                                     logprobs=logprobs)],
             usage=SimpleNamespace(**self.usage),
         )
 

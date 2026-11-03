@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import logging
 import random
+import time
+from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -17,11 +19,16 @@ from .triggers import Cooldown, Trigger, detect_trigger, is_ignored
 
 log = logging.getLogger(__name__)
 
-INTERJECT_JUDGE_PROMPT = (
-    "你是一個判斷器。以下是 Discord 群組的對話，最後一行是最新訊息。"
-    "請判斷一個個性鮮明、愛吐槽的群組成員現在插話是否自然且有趣。"
-    "只回答「是」或「否」，不要解釋。"
+# 插話判斷：沿用和一般聊天相同的 prompt（原作資料、人設、對話紀錄），開頭可命中快取，
+# 判斷模型也知道角色的個性。只在最後一則訊息後面加上這段問題，讓模型回答一個字。
+INTERJECT_JUDGE_SUFFIX = (
+    "\n\n（以上是群組目前的對話，沒有人叫你。請判斷：以你的個性，現在主動加入這段對話是否自然，"
+    "而且你真的有話想說？只回答一個字：是 或 否。）"
 )
+HOUR = 3600.0
+# 插話判斷含重試的總時限（秒）。判斷只要一個字，正常幾秒內就回來；
+# DeepSeek 排隊時與其等上幾分鐘（話題早就過了），不如放棄這次插話
+INTERJECT_JUDGE_TIMEOUT = 30.0
 
 
 @dataclass
@@ -63,6 +70,7 @@ class ChatService:
         rng: Callable[[], float] = random.random,
         replies: Replies | None = None,
         lore: Lore | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ):
         self.config = config
         self.llm = llm
@@ -72,6 +80,10 @@ class ChatService:
         self.rng = rng
         self.replies = replies or Replies()
         self.lore = lore
+        self.clock = clock
+        # 插話控制（記憶體內，重啟後歸零）：各頻道她上次發言的時間、最近一小時的插話時間
+        self._last_spoke: dict[int, float] = {}
+        self._interjections: dict[int, deque[float]] = defaultdict(deque)
 
     async def handle_message(self, message: Any, bot_user_id: int, *, dm_allowed: bool = False) -> Reply | None:
         if is_ignored(message, self.config):
@@ -99,8 +111,12 @@ class ChatService:
         if self.cooldown.remaining(message.author.id) > 0:
             log.debug("使用者 %s 冷卻中", message.author.id)
             return None
-        if trigger is Trigger.INTERJECT and not await self._worth_interjecting(prompt):
-            return None
+        if trigger is Trigger.INTERJECT:
+            # 先檢查頻道限制（不花錢），通過才呼叫判斷模型
+            if not self.interject_allowed(channel_id):
+                return None
+            if not await self._worth_interjecting(channel_id, prompt):
+                return None
         if not self.cooldown.try_acquire(message.author.id):
             return None
 
@@ -122,6 +138,10 @@ class ChatService:
         if not text:
             return Reply([self.replies["error"]], trigger, recorded=False)
         self.history.add(channel_id, self.bot_display_name, text, is_bot=True)
+        now = self.clock()
+        self._last_spoke[channel_id] = now
+        if trigger is Trigger.INTERJECT:
+            self._interjections[channel_id].append(now)
         return Reply(split_message(text), trigger, recorded=True)
 
     async def deep(self, channel_id: int, author: str, question: str) -> Reply:
@@ -136,27 +156,40 @@ class ChatService:
                                    thinking=self.config.thinking_deep,
                                    total_timeout=self.config.deep_total_timeout_seconds)
 
-    async def _worth_interjecting(self, prompt: list[dict[str, str]] | None) -> bool:
+    def interject_allowed(self, channel_id: int) -> bool:
+        """頻道層級的插話限制：她上次發言後的冷卻、每小時上限。"""
+        now = self.clock()
+        cooldown = self.config.interject_channel_cooldown_minutes * 60
+        last = self._last_spoke.get(channel_id)
+        if last is not None and now - last < cooldown:
+            log.debug("頻道 %s 插話冷卻中", channel_id)
+            return False
+        limit = self.config.interject_max_per_hour
+        if limit > 0:
+            recent = self._interjections[channel_id]
+            while recent and now - recent[0] >= HOUR:
+                recent.popleft()
+            if len(recent) >= limit:
+                log.info("頻道 %s 這一小時已插話 %d 次，達到上限", channel_id, len(recent))
+                return False
+        return True
+
+    async def _worth_interjecting(self, channel_id: int, prompt: list[dict[str, str]] | None) -> bool:
         if not prompt:
             return False
         if self.llm.over_budget():
             return False
-        transcript = "\n".join(m["content"] for m in prompt[1:] if m["role"] != "system")[-3000:]
+        judge = [dict(m) for m in prompt]
+        judge[-1]["content"] += INTERJECT_JUDGE_SUFFIX
         try:
-            answer = await self.llm.chat(
-                [
-                    {"role": "system", "content": INTERJECT_JUDGE_PROMPT},
-                    {"role": "user", "content": transcript},
-                ],
-                model=self.config.model_default,
-                max_tokens=5,
-                purpose="interject_judge",
-                temperature=0,
-                thinking="disabled",  # 只要一個字，不能讓推理吃掉 max_tokens
-            )
+            p = await self.llm.yes_probability(judge, model=self.config.model_default, purpose="interject_judge",
+                                               total_timeout=INTERJECT_JUDGE_TIMEOUT)
         except (BudgetExceeded, LLMError, ContentFiltered):
             return False
-        return answer.strip().startswith("是")
+        threshold = self.config.interject_threshold
+        log.info("插話判斷（頻道 %s）：p=%.2f，門檻 %.2f → %s", channel_id, p, threshold,
+                 "插話" if p >= threshold else "不插話")
+        return p >= threshold
 
     def _now(self):
         """要附在 prompt 的現在時間（BOT_TIMEZONE）；SHOW_CURRENT_TIME=false 時不附。"""

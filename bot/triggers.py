@@ -64,9 +64,18 @@ def detect_trigger(
         return Trigger.REPLY
     if contains_name(message.content or "", config.bot_names):
         return Trigger.NAME
-    if config.random_interject_rate > 0 and rng() < config.random_interject_rate:
+    rate = interject_rate(message.content or "", config)
+    if rate > 0 and rng() < rate:
         return Trigger.INTERJECT
     return None
+
+
+def interject_rate(content: str, config: Config) -> float:
+    """一般訊息被抽中、進入插話判斷的機率；聊到指定話題時提高。"""
+    rate = config.random_interject_rate
+    if config.interject_keywords and contains_name(content, config.interject_keywords):
+        rate = max(rate, config.interject_keyword_rate)
+    return rate
 
 
 class Cooldown:

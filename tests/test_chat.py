@@ -92,7 +92,8 @@ async def test_interject_judge_no(make_service, fake_openai):
     fake_openai.completions.replies = ["否"]
     assert await svc.handle_message(make_message("今天好累"), BOT_ID) is None
     assert len(fake_openai.completions.calls) == 1
-    assert fake_openai.completions.calls[0]["max_tokens"] == 5
+    assert fake_openai.completions.calls[0]["max_tokens"] == 1  # 只要一個字（是／否），機率看 logprobs
+    assert fake_openai.completions.calls[0]["logprobs"] is True
     assert fake_openai.completions.calls[0]["extra_body"] == {"thinking": {"type": "disabled"}}
     # 判斷為否不消耗冷卻
     assert svc.cooldown.remaining(1) == 0
