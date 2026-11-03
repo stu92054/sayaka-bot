@@ -39,12 +39,16 @@ def build_prompt(
     recent: list[StoredMessage],
     current_author: str,
     current_content: str,
+    lore: str | None = None,
 ) -> list[dict[str, str]]:
-    """順序固定：persona 全文 → 頻道摘要 → 近期訊息 → 當前訊息。
+    """順序固定：原作資料 → persona 全文 → 頻道摘要 → 近期訊息 → 當前訊息。
 
-    persona 永遠是第一則且內容不變，讓 DeepSeek 的前綴快取能命中。
+    原作資料與 persona 都放在最前面且內容不變，讓 DeepSeek 的前綴快取能命中。
     """
-    messages: list[dict[str, str]] = [{"role": "system", "content": persona}]
+    messages: list[dict[str, str]] = []
+    if lore:
+        messages.append({"role": "system", "content": lore})
+    messages.append({"role": "system", "content": persona})
     if summary:
         messages.append({"role": "system", "content": f"先前發生過的事（摘要）：\n{summary}"})
     for m in recent:
@@ -75,8 +79,9 @@ class HistoryManager:
     def reset(self, channel_id: int) -> None:
         self.storage.clear_channel(channel_id)
 
-    def build_prompt(self, channel_id: int, persona: str, author: str, content: str) -> list[dict[str, str]]:
-        return build_prompt(persona, self.summary(channel_id), self.recent(channel_id), author, content)
+    def build_prompt(self, channel_id: int, persona: str, author: str, content: str,
+                     lore: str | None = None) -> list[dict[str, str]]:
+        return build_prompt(persona, self.summary(channel_id), self.recent(channel_id), author, content, lore)
 
     def needs_summary(self, channel_id: int) -> bool:
         return self.storage.count_messages(channel_id) > self.max_messages

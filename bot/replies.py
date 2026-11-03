@@ -25,7 +25,7 @@ DEFAULT_REPLIES: dict[str, str] = {
     # slash command 說明（Discord 同步時固定，修改後要重啟 bot 才會更新）
     "deep_description": "用深度模型認真回答一個問題",
     "reset_description": "清除本頻道的對話歷史與摘要（管理員）",
-    "persona_reload_description": "重新讀取 persona.md 與 replies.toml（管理員）",
+    "persona_reload_description": "重新讀取人設、原作資料與固定訊息（管理員）",
     "usage_description": "顯示今日 token 用量與預估費用（管理員）",
 }
 

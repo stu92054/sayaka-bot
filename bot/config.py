@@ -98,6 +98,12 @@ def _holiday_sources(value: str) -> tuple[str, ...]:
     return _str_list(value)
 
 
+def _lore_dir(value: str) -> Path | None:
+    if value.strip().lower() in ("none", "off", "disabled"):
+        return None
+    return Path(value)
+
+
 def _effort(value: str, key: str) -> str:
     value = value.lower()
     if value not in EFFORT_CHOICES:
@@ -137,13 +143,18 @@ class Config:
     reasoning_effort_deep: str = "high"
     deep_max_tokens: int = 8000
     history_max_messages: int = 30
-    daily_token_budget: int = 2_000_000
+    # 每日費用上限（人民幣元，依每次呼叫記錄的費用加總）；0 = 不限制
+    daily_cost_budget: float = 5.0
+    # 每日 token 上限（輸入＋輸出，包含命中快取的部分）；0 = 不限制
+    daily_token_budget: int = 0
     user_cooldown_seconds: float = 5.0
     max_reply_tokens: int = 600
     random_interject_rate: float = 0.0
     deepseek_base_url: str = "https://api.deepseek.com"
     persona_path: Path = Path("persona.md")
     replies_path: Path = Path("replies.toml")
+    # 原作資料資料夾；None = 不使用
+    lore_dir: Path | None = Path("lore")
     db_path: Path = Path("data/bot.sqlite3")
     timezone: str = "Asia/Taipei"
     log_level: str = "INFO"
@@ -176,13 +187,15 @@ class Config:
             reasoning_effort_deep=_effort(_get(env, "REASONING_EFFORT_DEEP", "high"), "REASONING_EFFORT_DEEP"),
             deep_max_tokens=int(_get(env, "DEEP_MAX_TOKENS", "8000")),
             history_max_messages=int(_get(env, "HISTORY_MAX_MESSAGES", "30")),
-            daily_token_budget=int(_get(env, "DAILY_TOKEN_BUDGET", "2000000")),
+            daily_cost_budget=float(_get(env, "DAILY_COST_BUDGET", "5")),
+            daily_token_budget=int(_get(env, "DAILY_TOKEN_BUDGET", "0")),
             user_cooldown_seconds=float(_get(env, "USER_COOLDOWN_SECONDS", "5")),
             max_reply_tokens=int(_get(env, "MAX_REPLY_TOKENS", "600")),
             random_interject_rate=float(_get(env, "RANDOM_INTERJECT_RATE", "0")),
             deepseek_base_url=_get(env, "DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
             persona_path=Path(_get(env, "PERSONA_PATH", "persona.md")),
             replies_path=Path(_get(env, "REPLIES_PATH", "replies.toml")),
+            lore_dir=_lore_dir(_get(env, "LORE_DIR", "lore")),
             db_path=Path(_get(env, "DB_PATH", "data/bot.sqlite3")),
             timezone=_get(env, "BOT_TIMEZONE", "Asia/Taipei"),
             log_level=_get(env, "LOG_LEVEL", "INFO").upper(),

@@ -94,8 +94,25 @@ class LLMClient:
     def tokens_today(self) -> int:
         return self.storage.tokens_on(self.today())
 
+    def cost_today(self) -> float:
+        return self.storage.cost_on(self.today())
+
+    def budget_status(self) -> str | None:
+        """超過預算時回傳原因，否則 None。兩種上限設為 0 時不限制。"""
+        cost_budget = self.config.daily_cost_budget
+        if cost_budget > 0:
+            spent = self.cost_today()
+            if spent >= cost_budget:
+                return f"今日費用 ¥{spent:.4f} 已達上限 ¥{cost_budget:g}"
+        token_budget = self.config.daily_token_budget
+        if token_budget > 0:
+            used = self.tokens_today()
+            if used >= token_budget:
+                return f"今日 tokens {used:,} 已達上限 {token_budget:,}"
+        return None
+
     def over_budget(self) -> bool:
-        return self.tokens_today() >= self.config.daily_token_budget
+        return self.budget_status() is not None
 
     def usage_today(self) -> list[UsageRow]:
         return self.storage.usage_by_model(self.today())
@@ -124,8 +141,10 @@ class LLMClient:
         thinking: str | None = None,
         reasoning_effort: str | None = None,
     ) -> str:
-        if self.over_budget():
-            raise BudgetExceeded()
+        reason = self.budget_status()
+        if reason is not None:
+            log.warning("超過每日預算，不呼叫 API（%s）：%s", purpose, reason)
+            raise BudgetExceeded(reason)
         model = model or self.config.model_default
         kwargs: dict[str, Any] = {
             "model": model,

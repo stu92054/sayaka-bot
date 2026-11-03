@@ -175,6 +175,11 @@ class Storage:
             ).fetchone()
         return int(row[0])
 
+    def cost_on(self, day: str) -> float:
+        with self._lock:
+            row = self._conn.execute("SELECT COALESCE(SUM(cost), 0) FROM usage WHERE day=?", (day,)).fetchone()
+        return float(row[0])
+
     def usage_by_model(self, day: str) -> list[UsageRow]:
         with self._lock:
             rows = self._conn.execute(
