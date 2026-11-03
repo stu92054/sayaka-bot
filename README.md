@@ -7,6 +7,7 @@
 
 - [`persona.md`](persona.md)：人設（system prompt）
 - [`replies.toml`](replies.toml)：固定訊息（額度用完、錯誤、權限不足、冷卻中…）與 slash command 說明
+- [`lore/`](lore/)：原作資料（個人設定、人物關係、事件時間線），讓她回答原作相關問題時有所依據
 
 ## 功能概要
 
@@ -15,8 +16,10 @@
 - **一律忽略**：其他 bot、不在 `ALLOWED_GUILD_IDS` 的伺服器、冷卻時間內的同一使用者。
 - **脈絡**：每個頻道保留最近 `HISTORY_MAX_MESSAGES` 則訊息（包含別人之間的對話，格式 `KO: 今天好累`）。
   超過上限時，較舊的訊息會被 flash 模型壓成摘要（一次壓到剩一半上限，以減少摘要次數）。
-- **Prompt 順序固定**：`persona.md` 全文 → 頻道摘要 → 近期訊息 → 當前訊息，persona 永遠在最前面，有利 DeepSeek 前綴快取。
-- **成本控管**：每次呼叫記錄 input / output / cache-hit tokens；超過 `DAILY_TOKEN_BUDGET` 就只回固定訊息；`/usage` 依高峰／空閒時段估算人民幣費用。
+- **Prompt 順序固定**：原作資料（`lore/`）→ `persona.md` 全文 → 頻道摘要 → 近期訊息 → 當前訊息。
+  最前面兩段內容固定不變，有利 DeepSeek 前綴快取。
+- **成本控管**：每次呼叫記錄 input / output / cache-hit tokens 與費用；今日費用超過 `DAILY_COST_BUDGET` 就只回固定訊息；
+  `/usage` 依高峰／空閒時段估算費用（幣別依 `PRICE_CURRENCY`，預設美元）。
 - **安全**：bot 送出的所有訊息都不允許任何提及（@everyone / @here / 角色 / 使用者），避免模型照著使用者要求或引用原文替人 ping 人；
   回覆超過 2000 字元自動分段；網路錯誤、逾時、429、5xx 指數退避重試（共 3 次），key 錯誤、權限不足、參數錯誤等
   不可重試的錯誤直接失敗；log 中的 token / API key 會被遮蔽。
@@ -27,7 +30,7 @@
 | --- | --- | --- |
 | `/deep <問題>` | 用 `MODEL_DEEP`（預設 `deepseek-v4-pro`，開啟思考模式）回答 | 所有人 |
 | `/reset` | 清除本頻道歷史與摘要 | 管理員 |
-| `/persona_reload` | 重新讀取 `persona.md` 與 `replies.toml` | 管理員 |
+| `/persona_reload` | 重新讀取 `persona.md`、`lore/` 與 `replies.toml` | 管理員 |
 | `/usage` | 今日 token 用量與預估費用 | 管理員 |
 
 「管理員」指 `ADMIN_USER_IDS` 中的使用者。
@@ -92,7 +95,10 @@ cp .env.example .env
 | `REASONING_EFFORT_DEEP` | `high` | `/deep` 的思考強度 |
 | `DEEP_MAX_TOKENS` | `8000` | `/deep` 的 max_tokens（推理 tokens 也算在 completion 內） |
 | `HISTORY_MAX_MESSAGES` | `30` | 每頻道保留的近期訊息數 |
-| `DAILY_TOKEN_BUDGET` | `2000000` | 每日 token 上限（input + output） |
+| `DAILY_COST_BUDGET` | `1` | 每日費用上限（幣別同 `PRICE_CURRENCY`，依記錄的費用加總）；`0` = 不限制 |
+| `PRICE_CURRENCY` | `USD` | 計價幣別，依 DeepSeek 帳戶設定：`USD`（英文版價目表）或 `CNY`（中文版價目表） |
+| `DAILY_TOKEN_BUDGET` | `0` | 每日 token 上限（輸入＋輸出，含命中快取的部分），選填；`0` = 不限制 |
+| `LORE_DIR` | `lore` | 原作資料資料夾；`none` = 不使用 |
 | `USER_COOLDOWN_SECONDS` | `5` | 同一使用者觸發的冷卻秒數 |
 | `MAX_REPLY_TOKENS` | `600` | 每次回覆的最大 tokens |
 | `RANDOM_INTERJECT_RATE` | `0` | 主動插話機率（0～1） |
@@ -101,7 +107,7 @@ cp .env.example .env
 | `DB_PATH` | `data/bot.sqlite3` | SQLite 檔路徑 |
 | `BOT_TIMEZONE` | `Asia/Taipei` | 計算「今日」用量的時區 |
 | `LOG_LEVEL` | `INFO` | log 等級 |
-| `PRICE_TABLE` | 內建 | 覆寫高峰時段價目表，格式 `model:命中:未命中:輸出;...`（元 / 百萬 tokens） |
+| `PRICE_TABLE` | 內建 | 覆寫高峰時段價格，格式 `model:命中:未命中:輸出;...`（每百萬 tokens，幣別同 `PRICE_CURRENCY`） |
 | `PRICE_OFFPEAK_RATIO` | `0.5` | 空閒時段價格比例 |
 | `HOLIDAY_SOURCE_URLS` | holiday-cn（GitHub Raw、jsDelivr） | 節假日資料來源，逗號分隔依序嘗試，`{year}` 換成年份；`none` 停用 |
 | `HOLIDAY_MAKEUP_WORKDAY_PEAK` | `false` | 調休補班的週末是否算高峰 |
@@ -109,15 +115,22 @@ cp .env.example .env
 
 ### 費用估算
 
-`/usage` 的費用依 DeepSeek 官方價目表（人民幣），**每次呼叫當下**判斷高峰／空閒時段後計算並存進 SQLite：
+`/usage` 的費用依 DeepSeek 官方價目表，**每次呼叫當下**判斷高峰／空閒時段後計算並存進 SQLite。
+DeepSeek 的美元帳戶與人民幣帳戶價格不同（不是單純匯率換算），請用 `PRICE_CURRENCY` 選擇和帳戶相同的幣別：
 
 | 模型 | 輸入（快取命中） | 輸入（未命中） | 輸出 |
 | --- | --- | --- | --- |
-| `deepseek-flash` | 0.04 元 | 2 元 | 8 元 |
-| `deepseek-v4-pro` | 0.30 元 | 9 元 | 27 元 |
+| `deepseek-flash`（USD，預設） | $0.006 | $0.3 | $1.2 |
+| `deepseek-v4-pro`（USD，預設） | $0.044 | $1.32 | $3.96 |
+| `deepseek-flash`（CNY） | ¥0.04 | ¥2 | ¥8 |
+| `deepseek-v4-pro`（CNY） | ¥0.30 | ¥9 | ¥27 |
 
-以上是高峰時段每百萬 tokens 的價格；空閒時段減半。高峰時段為北京時間週一至週五 9:00–12:00、14:00–18:00，
-週末與中國法定節假日全天算空閒。
+以上是高峰時段每百萬 tokens 的價格；空閒時段減半。高峰時段為週一至週五 UTC 01:00–04:00、06:00–10:00
+（即北京時間 9:00–12:00、14:00–18:00），週末與中國法定節假日全天算空閒。
+
+每筆用量都會記下當時的幣別；每日預算只加總目前幣別的費用，中途切換幣別也不會把美元和人民幣加在一起。
+以美元帳戶估算：flash 一般聊天每次約 $0.0003～0.0006，`DAILY_COST_BUDGET=1` 約可回 1,700～3,300 則；
+`/deep`（pro＋思考模式）單次最多約 $0.03（高峰時段、用滿 `DEEP_MAX_TOKENS`）。
 
 **節假日資料**：自動從 [NateScarlet/holiday-cn](https://github.com/NateScarlet/holiday-cn)（每日抓取國務院公告）下載
 今年與明年的資料，啟動時在背景下載、之後每天更新一次，並快取在 `data/holidays/{年份}.json`。
@@ -169,6 +182,7 @@ docker run -d --name sayaka-bot --restart unless-stopped \
   -v "$(pwd)/data:/app/data" \
   -v "$(pwd)/persona.md:/app/persona.md:ro" \
   -v "$(pwd)/replies.toml:/app/replies.toml:ro" \
+  -v "$(pwd)/lore:/app/lore:ro" \
   sayaka-bot
 ```
 
@@ -195,11 +209,26 @@ journalctl -u sayaka-bot -f
 
 ### persona.md
 
-1. 編輯 `persona.md`（純文字 / Markdown，整份會原封不動放進 system prompt 的最前面）。
+1. 編輯 `persona.md`（純文字 / Markdown，整份會原封不動放進 system prompt，緊接在原作資料之後）。
 2. 在 Discord 輸入 `/persona_reload`（管理員），bot 會重新讀檔，下一則回覆起生效，不用重啟。
 3. 若讀檔失敗（檔案不存在或是空的），會保留舊的人設並回報錯誤。
 
 小提醒：persona 內容一改，DeepSeek 的前綴快取就要重新累積，短時間內快取命中率會下降，這是正常的。
+
+### 原作資料（lore/）
+
+群組裡難免有人問原作的事（「妳跟綴理先輩是怎麼認識的」「104 期 8 話那時候在想什麼」），
+讓她依據資料回答，比靠模型自己的記憶可靠，也能避免亂編劇情。
+
+- `lore/` 裡的 `*.md` 依檔名排序，**整份**放進 prompt 的最前面（persona 之前），用 `<lore>` 標籤包住，
+  並附上說明：只在被問到原作時參考、不要主動背誦、資料沒有的事不要編造。
+- 目前約 1.3 萬字（約 1 萬 tokens）。因為內容固定在 prompt 最前面，DeepSeek 的前綴快取幾乎每次都會命中，
+  以 flash 的快取命中價計算，每次呼叫只多約 $0.00003～0.00006；快取失效後的第一次約多 $0.0015～0.003。
+  也因此每日預算改用費用（`DAILY_COST_BUDGET`）計算，命中快取的 token 不會很快把額度用完。
+- 摘要與插話判斷不會附上原作資料。
+- 修改後用 `/persona_reload` 生效。資料一改，前綴快取要重新累積，短時間內費用會稍高。
+- 資料來源：角色資料包的 wiki（個人設定、人物關係、重要事件時間線），已移除指向未收錄台本的參考、
+  內部路徑與台本語料統計。原作台本本身沒有放進 repo。
 
 ### replies.toml
 
@@ -207,7 +236,7 @@ journalctl -u sayaka-bot -f
 
 | 項目 | 用途 |
 | --- | --- |
-| `budget_exceeded` | 超過 `DAILY_TOKEN_BUDGET` 時的回覆 |
+| `budget_exceeded` | 超過每日預算（`DAILY_COST_BUDGET` 或 `DAILY_TOKEN_BUDGET`）時的回覆 |
 | `error` | API 失敗時的回覆 |
 | `content_filter` | 回覆被 DeepSeek 內容過濾時的回覆 |
 | `not_admin` | 非管理員使用管理指令 |
@@ -235,7 +264,7 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-測試完全使用 mock，不會連到 Discord 或 DeepSeek。涵蓋：觸發規則、冷卻、歷史裁切與摘要觸發、訊息分段、預算超限、
+測試完全使用 mock，不會連到 Discord 或 DeepSeek。涵蓋：觸發規則、冷卻、歷史裁切與摘要觸發、訊息分段、預算超限（費用與 token）、原作資料載入與 prompt 順序、
 重試（含不可重試的錯誤）、用量紀錄、log 遮蔽、replies.toml 載入與缺項處理、/deep 不允許提及等。
 
 ## 專案結構
@@ -252,10 +281,12 @@ bot/
   storage.py    # SQLite
   persona.py    # persona.md 載入
   replies.py    # replies.toml 載入（固定訊息、指令說明）
+  lore.py       # lore/ 原作資料載入
   holidays.py   # 中國節假日／調休資料（判斷高峰時段）
   text.py       # 2000 字元分段
 persona.md
 replies.toml
+lore/          # 原作資料（整份放進 prompt）
 tests/
 deploy/bot.service
 Dockerfile

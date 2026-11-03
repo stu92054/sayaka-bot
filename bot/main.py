@@ -14,6 +14,7 @@ from .config import Config
 from .history import HistoryManager
 from .holidays import HolidayCalendar, pricing_years
 from .llm import LLMClient
+from .lore import Lore
 from .persona import Persona
 from .replies import Replies
 from .storage import Storage
@@ -60,7 +61,7 @@ def setup_logging(config: Config) -> None:
 
 class PersonaBot(discord.Client):
     def __init__(self, config: Config, storage: Storage, llm: LLMClient, persona: Persona,
-                 replies: Replies | None = None):
+                 replies: Replies | None = None, lore: Lore | None = None):
         intents = discord.Intents.default()
         intents.message_content = True  # 需要在 Developer Portal 開啟 Message Content Intent
         # 完全不允許提及（@everyone、@here、角色、使用者、被回覆者），避免模型照著使用者要求輸出 <@id> 去 ping 人。
@@ -72,9 +73,10 @@ class PersonaBot(discord.Client):
         self.llm = llm
         self.persona = persona
         self.replies = replies or Replies()
+        self.lore = lore
         self.history = HistoryManager(storage, llm, config.history_max_messages)
         self.chat = ChatService(config, llm, self.history, persona, Cooldown(config.user_cooldown_seconds),
-                                replies=self.replies)
+                                replies=self.replies, lore=lore)
         self.tree = app_commands.CommandTree(self)
         self._member_cache: dict[int, bool] = {}
         self._bg_tasks: set[asyncio.Task] = set()
@@ -185,6 +187,7 @@ def main() -> int:
 
     persona = Persona(config.persona_path)
     replies = Replies(config.replies_path)  # 缺檔或缺項只記 warning，不會中止
+    lore = Lore(config.lore_dir) if config.lore_dir is not None else None
     storage = Storage(config.db_path)
     calendar = HolidayCalendar(
         cache_dir=config.db_path.parent / "holidays",
@@ -193,7 +196,7 @@ def main() -> int:
     )
     calendar.load_cache(pricing_years())
     llm = LLMClient(config, storage, calendar=calendar)
-    bot = PersonaBot(config, storage, llm, persona, replies)
+    bot = PersonaBot(config, storage, llm, persona, replies, lore)
     try:
         bot.run(config.discord_token, log_handler=None)
     finally:

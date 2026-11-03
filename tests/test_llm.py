@@ -57,7 +57,7 @@ async def test_budget_counts_only_today(make_service, fake_openai, storage):
 async def test_cost_offpeak_is_half(make_service, fake_openai):
     fake_openai.completions.usage = dict(prompt_tokens=2_000_000, completion_tokens=1_000_000,
                                          prompt_cache_hit_tokens=1_000_000, prompt_cache_miss_tokens=1_000_000)
-    svc = make_service()  # 週二 12:30 → 空閒
+    svc = make_service(price_currency="CNY")  # 週二 12:30 → 空閒
     await svc.llm.chat([{"role": "user", "content": "hi"}])
     # flash 高峰：命中 0.04 + 未命中 2 + 輸出 8 = 10.04 元，空閒減半
     assert svc.llm.estimate_cost(svc.llm.usage_today()) == pytest.approx(5.02)
@@ -66,7 +66,7 @@ async def test_cost_offpeak_is_half(make_service, fake_openai):
 async def test_cost_peak_full_price_for_pro(make_service, fake_openai):
     fake_openai.completions.usage = dict(prompt_tokens=1_000_000, completion_tokens=1_000_000,
                                          prompt_cache_hit_tokens=0, prompt_cache_miss_tokens=1_000_000)
-    svc = make_service(now=datetime(2026, 11, 3, 10, 0, tzinfo=TAIPEI))  # 週二 10:00 → 高峰
+    svc = make_service(now=datetime(2026, 11, 3, 10, 0, tzinfo=TAIPEI), price_currency="CNY")  # 週二 10:00 → 高峰
     await svc.llm.chat([{"role": "user", "content": "hi"}], model="deepseek-v4-pro")
     assert svc.llm.estimate_cost(svc.llm.usage_today()) == pytest.approx(9.0 + 27.0)
 

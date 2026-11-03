@@ -110,7 +110,7 @@ def test_manual_holidays_still_work():
 async def test_llm_cost_uses_calendar(make_service, fake_openai):
     fake_openai.completions.usage = dict(prompt_tokens=1_000_000, completion_tokens=0,
                                          prompt_cache_hit_tokens=0, prompt_cache_miss_tokens=1_000_000)
-    svc = make_service(now=bj(2026, 10, 1, 10, 0))  # 國慶上午，原本會被算成高峰
+    svc = make_service(now=bj(2026, 10, 1, 10, 0), price_currency="CNY")  # 國慶上午，原本會被算成高峰
     svc.llm.calendar = await _calendar()
     await svc.llm.chat([{"role": "user", "content": "hi"}])
     assert svc.llm.estimate_cost(svc.llm.usage_today()) == pytest.approx(1.0)  # 2 元 × 0.5

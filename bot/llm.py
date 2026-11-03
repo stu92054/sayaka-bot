@@ -94,14 +94,31 @@ class LLMClient:
     def tokens_today(self) -> int:
         return self.storage.tokens_on(self.today())
 
+    def cost_today(self) -> float:
+        return self.storage.cost_on(self.today(), self.config.price_currency)
+
+    def budget_status(self) -> str | None:
+        """超過預算時回傳原因，否則 None。兩種上限設為 0 時不限制。"""
+        cost_budget = self.config.daily_cost_budget
+        if cost_budget > 0:
+            spent = self.cost_today()
+            if spent >= cost_budget:
+                return f"今日費用 {self.config.money(spent)} 已達上限 {self.config.money(cost_budget, 2)}"
+        token_budget = self.config.daily_token_budget
+        if token_budget > 0:
+            used = self.tokens_today()
+            if used >= token_budget:
+                return f"今日 tokens {used:,} 已達上限 {token_budget:,}"
+        return None
+
     def over_budget(self) -> bool:
-        return self.tokens_today() >= self.config.daily_token_budget
+        return self.budget_status() is not None
 
     def usage_today(self) -> list[UsageRow]:
-        return self.storage.usage_by_model(self.today())
+        return self.storage.usage_by_model(self.today(), self.config.price_currency)
 
     def estimate_cost(self, rows: list[UsageRow]) -> float:
-        """今日預估費用（元）。每次呼叫時已依高峰／空閒時段算好並存入資料庫。"""
+        """今日預估費用（幣別同 PRICE_CURRENCY）。每次呼叫時已依高峰／空閒時段算好並存入資料庫。"""
         return sum(r.cost for r in rows)
 
     def _is_deep(self, model: str) -> bool:
@@ -124,8 +141,10 @@ class LLMClient:
         thinking: str | None = None,
         reasoning_effort: str | None = None,
     ) -> str:
-        if self.over_budget():
-            raise BudgetExceeded()
+        reason = self.budget_status()
+        if reason is not None:
+            log.warning("超過每日預算，不呼叫 API（%s）：%s", purpose, reason)
+            raise BudgetExceeded(reason)
         model = model or self.config.model_default
         kwargs: dict[str, Any] = {
             "model": model,
@@ -192,6 +211,6 @@ class LLMClient:
         peak = self.config.is_peak(now, self.calendar)
         cost = self.config.call_cost(model, hit, miss, completion, now, self.calendar)
         self.storage.record_usage(self.today(), model, purpose, prompt, completion, hit, miss, cost=cost, peak=peak,
-                                  reasoning_tokens=reasoning)
-        log.info("用量 %s/%s：in=%d (hit=%d) out=%d (推理 %d) ¥%.5f%s", model, purpose, prompt, hit, completion,
-                 reasoning, cost, "（高峰）" if peak else "")
+                                  reasoning_tokens=reasoning, currency=self.config.price_currency)
+        log.info("用量 %s/%s：in=%d (hit=%d) out=%d (推理 %d) %s%s", model, purpose, prompt, hit, completion,
+                 reasoning, self.config.money(cost, 6), "（高峰）" if peak else "")

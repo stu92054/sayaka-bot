@@ -16,23 +16,38 @@ from dotenv import load_dotenv
 
 @dataclass(frozen=True)
 class ModelPrice:
-    """每百萬 tokens 的「高峰時段」價格（人民幣元）。空閒時段乘上 offpeak_ratio。"""
+    """每百萬 tokens 的「高峰時段」價格（幣別見 PRICE_CURRENCY）。空閒時段乘上 offpeak_ratio。"""
 
     cache_hit: float
     cache_miss: float
     output: float
 
 
-# DeepSeek 官方價目表（高峰時段，元 / 百萬 tokens）。可用 PRICE_TABLE 覆寫。
-_FLASH = ModelPrice(cache_hit=0.04, cache_miss=2.0, output=8.0)
-DEFAULT_PRICES: dict[str, ModelPrice] = {
-    "deepseek-flash": _FLASH,
-    # 舊名稱仍可呼叫，由新版 Flash 服務並以 Flash 價格計費
-    "deepseek-v4-flash": _FLASH,
-    "deepseek-v4-flash-vision-exp": _FLASH,
-    "deepseek-v4-pro": ModelPrice(cache_hit=0.30, cache_miss=9.0, output=27.0),
+def _price_table_for(flash: ModelPrice, pro: ModelPrice) -> dict[str, ModelPrice]:
+    return {
+        "deepseek-flash": flash,
+        # 舊名稱仍可呼叫，由新版 Flash 服務並以 Flash 價格計費
+        "deepseek-v4-flash": flash,
+        "deepseek-v4-flash-vision-exp": flash,
+        "deepseek-v4-pro": pro,
+    }
+
+
+# DeepSeek 官方價目表（高峰時段，每百萬 tokens）。依帳戶的計價幣別選用，可用 PRICE_TABLE 覆寫。
+PRICE_TABLES: dict[str, dict[str, ModelPrice]] = {
+    # 英文版價目表（美元帳戶）
+    "USD": _price_table_for(
+        flash=ModelPrice(cache_hit=0.006, cache_miss=0.3, output=1.2),
+        pro=ModelPrice(cache_hit=0.044, cache_miss=1.32, output=3.96),
+    ),
+    # 中文版價目表（人民幣帳戶）
+    "CNY": _price_table_for(
+        flash=ModelPrice(cache_hit=0.04, cache_miss=2.0, output=8.0),
+        pro=ModelPrice(cache_hit=0.30, cache_miss=9.0, output=27.0),
+    ),
 }
-FALLBACK_PRICE = _FLASH
+CURRENCY_SYMBOLS = {"USD": "$", "CNY": "¥"}
+FALLBACK_MODEL = "deepseek-flash"  # 不認得的模型以 flash 價格估算
 
 # 高峰時段：北京時間週一至週五 9:00-12:00、14:00-18:00（不含中國法定節假日）
 PRICING_TZ = ZoneInfo("Asia/Shanghai")
@@ -98,6 +113,12 @@ def _holiday_sources(value: str) -> tuple[str, ...]:
     return _str_list(value)
 
 
+def _lore_dir(value: str) -> Path | None:
+    if value.strip().lower() in ("none", "off", "disabled"):
+        return None
+    return Path(value)
+
+
 def _effort(value: str, key: str) -> str:
     value = value.lower()
     if value not in EFFORT_CHOICES:
@@ -105,9 +126,16 @@ def _effort(value: str, key: str) -> str:
     return value
 
 
+def _currency(value: str) -> str:
+    value = value.strip().upper()
+    if value not in PRICE_TABLES:
+        raise ValueError(f"PRICE_CURRENCY 必須是 {'/'.join(PRICE_TABLES)} 之一")
+    return value
+
+
 def _price_table(value: str) -> dict[str, ModelPrice]:
-    """格式：model:hit:miss:output;model2:hit:miss:output"""
-    prices = dict(DEFAULT_PRICES)
+    """覆寫用的價格，格式：model:hit:miss:output;model2:hit:miss:output（幣別同 PRICE_CURRENCY）"""
+    prices: dict[str, ModelPrice] = {}
     for entry in value.split(";"):
         entry = entry.strip()
         if not entry:
@@ -137,17 +165,25 @@ class Config:
     reasoning_effort_deep: str = "high"
     deep_max_tokens: int = 8000
     history_max_messages: int = 30
-    daily_token_budget: int = 2_000_000
+    # 每日費用上限（幣別同 PRICE_CURRENCY，依每次呼叫記錄的費用加總）；0 = 不限制
+    daily_cost_budget: float = 1.0
+    # 每日 token 上限（輸入＋輸出，包含命中快取的部分）；0 = 不限制
+    daily_token_budget: int = 0
     user_cooldown_seconds: float = 5.0
     max_reply_tokens: int = 600
     random_interject_rate: float = 0.0
     deepseek_base_url: str = "https://api.deepseek.com"
     persona_path: Path = Path("persona.md")
     replies_path: Path = Path("replies.toml")
+    # 原作資料資料夾；None = 不使用
+    lore_dir: Path | None = Path("lore")
     db_path: Path = Path("data/bot.sqlite3")
     timezone: str = "Asia/Taipei"
     log_level: str = "INFO"
-    prices: dict[str, ModelPrice] = field(default_factory=lambda: dict(DEFAULT_PRICES))
+    # 計價幣別：USD（英文版價目表）或 CNY（中文版價目表），依 DeepSeek 帳戶的計價幣別設定
+    price_currency: str = "USD"
+    # PRICE_TABLE 覆寫的價格
+    price_overrides: dict[str, ModelPrice] = field(default_factory=dict)
     offpeak_ratio: float = 0.5
     cn_holidays: frozenset[date] = frozenset()
     # 自動下載節假日資料的來源（空 = 停用），{year} 會被替換成年份
@@ -176,17 +212,20 @@ class Config:
             reasoning_effort_deep=_effort(_get(env, "REASONING_EFFORT_DEEP", "high"), "REASONING_EFFORT_DEEP"),
             deep_max_tokens=int(_get(env, "DEEP_MAX_TOKENS", "8000")),
             history_max_messages=int(_get(env, "HISTORY_MAX_MESSAGES", "30")),
-            daily_token_budget=int(_get(env, "DAILY_TOKEN_BUDGET", "2000000")),
+            daily_cost_budget=float(_get(env, "DAILY_COST_BUDGET", "1")),
+            daily_token_budget=int(_get(env, "DAILY_TOKEN_BUDGET", "0")),
             user_cooldown_seconds=float(_get(env, "USER_COOLDOWN_SECONDS", "5")),
             max_reply_tokens=int(_get(env, "MAX_REPLY_TOKENS", "600")),
             random_interject_rate=float(_get(env, "RANDOM_INTERJECT_RATE", "0")),
             deepseek_base_url=_get(env, "DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
             persona_path=Path(_get(env, "PERSONA_PATH", "persona.md")),
             replies_path=Path(_get(env, "REPLIES_PATH", "replies.toml")),
+            lore_dir=_lore_dir(_get(env, "LORE_DIR", "lore")),
             db_path=Path(_get(env, "DB_PATH", "data/bot.sqlite3")),
             timezone=_get(env, "BOT_TIMEZONE", "Asia/Taipei"),
             log_level=_get(env, "LOG_LEVEL", "INFO").upper(),
-            prices=_price_table(_get(env, "PRICE_TABLE")),
+            price_currency=_currency(_get(env, "PRICE_CURRENCY", "USD")),
+            price_overrides=_price_table(_get(env, "PRICE_TABLE")),
             offpeak_ratio=float(_get(env, "PRICE_OFFPEAK_RATIO", "0.5")),
             cn_holidays=_date_list(_get(env, "CN_HOLIDAYS")),
             holiday_sources=_holiday_sources(_get(env, "HOLIDAY_SOURCE_URLS")),
@@ -209,7 +248,17 @@ class Config:
         return problems
 
     def price_for(self, model: str) -> ModelPrice:
-        return self.prices.get(model, FALLBACK_PRICE)
+        if model in self.price_overrides:
+            return self.price_overrides[model]
+        table = PRICE_TABLES[self.price_currency]
+        return table.get(model, table[FALLBACK_MODEL])
+
+    @property
+    def currency_symbol(self) -> str:
+        return CURRENCY_SYMBOLS[self.price_currency]
+
+    def money(self, amount: float, digits: int = 4) -> str:
+        return f"{self.currency_symbol}{amount:.{digits}f}"
 
     def is_peak(self, when: datetime, calendar: "HolidayCalendar | None" = None) -> bool:
         """when 必須帶時區。calendar 提供自動下載的節假日與調休資料。"""
@@ -225,7 +274,7 @@ class Config:
 
     def call_cost(self, model: str, cache_hit: int, cache_miss: int, output: int, when: datetime,
                   calendar: "HolidayCalendar | None" = None) -> float:
-        """單次呼叫費用（元）。"""
+        """單次呼叫費用（幣別同 PRICE_CURRENCY）。"""
         p = self.price_for(model)
         ratio = 1.0 if self.is_peak(when, calendar) else self.offpeak_ratio
         return (cache_hit * p.cache_hit + cache_miss * p.cache_miss + output * p.output) * ratio / 1_000_000
