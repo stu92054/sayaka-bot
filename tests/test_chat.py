@@ -5,7 +5,7 @@ from .conftest import BOT_ID, OTHER_GUILD_ID, make_message
 
 
 async def test_mention_gets_reply_and_both_sides_recorded(make_service, fake_openai, storage):
-    svc = make_service()
+    svc = make_service(show_current_time=False)  # 這裡只驗證紀錄與合併；時間另見 test_time.py
     reply = await svc.handle_message(make_message("大小姐早安"), BOT_ID)
     assert reply.trigger is Trigger.NAME
     assert reply.chunks == [fake_openai.completions.default]
@@ -19,7 +19,7 @@ async def test_mention_gets_reply_and_both_sides_recorded(make_service, fake_ope
 
 
 async def test_untriggered_message_recorded_but_not_answered(make_service, fake_openai, storage):
-    svc = make_service()
+    svc = make_service(show_current_time=False)
     assert await svc.handle_message(make_message("今天好累", author_name="Amy"), BOT_ID) is None
     assert fake_openai.completions.calls == []
     assert storage.recent_messages(500, 10)[0].content == "今天好累"
