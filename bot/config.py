@@ -164,6 +164,12 @@ class Config:
     reasoning_effort_default: str = "low"
     reasoning_effort_deep: str = "high"
     deep_max_tokens: int = 8000
+    # 單次 API 呼叫的逾時（秒）。DeepSeek 排隊時會一直送換行保持連線，SDK 的讀取逾時不會觸發，
+    # 所以由 LLMClient 自己計時
+    api_timeout_seconds: float = 120.0
+    deep_api_timeout_seconds: float = 360.0
+    # /deep 含重試的總時限：Discord 互動的 token 15 分鐘後失效，要留時間送出錯誤回覆
+    deep_total_timeout_seconds: float = 780.0
     history_max_messages: int = 30
     # 每日費用上限（幣別同 PRICE_CURRENCY，依每次呼叫記錄的費用加總）；0 = 不限制
     daily_cost_budget: float = 1.0
@@ -211,6 +217,9 @@ class Config:
             reasoning_effort_default=_effort(_get(env, "REASONING_EFFORT_DEFAULT", "low"), "REASONING_EFFORT_DEFAULT"),
             reasoning_effort_deep=_effort(_get(env, "REASONING_EFFORT_DEEP", "high"), "REASONING_EFFORT_DEEP"),
             deep_max_tokens=int(_get(env, "DEEP_MAX_TOKENS", "8000")),
+            api_timeout_seconds=float(_get(env, "API_TIMEOUT_SECONDS", "120")),
+            deep_api_timeout_seconds=float(_get(env, "DEEP_API_TIMEOUT_SECONDS", "360")),
+            deep_total_timeout_seconds=float(_get(env, "DEEP_TOTAL_TIMEOUT_SECONDS", "780")),
             history_max_messages=int(_get(env, "HISTORY_MAX_MESSAGES", "30")),
             daily_cost_budget=float(_get(env, "DAILY_COST_BUDGET", "1")),
             daily_token_budget=int(_get(env, "DAILY_TOKEN_BUDGET", "0")),
@@ -245,6 +254,10 @@ class Config:
             problems.append("HISTORY_MAX_MESSAGES 至少要 2")
         if not 0 <= self.random_interject_rate <= 1:
             problems.append("RANDOM_INTERJECT_RATE 必須介於 0 和 1")
+        if min(self.api_timeout_seconds, self.deep_api_timeout_seconds, self.deep_total_timeout_seconds) <= 0:
+            problems.append("API_TIMEOUT_SECONDS、DEEP_API_TIMEOUT_SECONDS、DEEP_TOTAL_TIMEOUT_SECONDS 必須大於 0")
+        if self.deep_total_timeout_seconds >= 900:
+            problems.append("DEEP_TOTAL_TIMEOUT_SECONDS 要小於 900（Discord 互動 15 分鐘後失效，會送不出回覆）")
         return problems
 
     def price_for(self, model: str) -> ModelPrice:

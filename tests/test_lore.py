@@ -98,8 +98,10 @@ def test_prompt_order_lore_persona_summary():
     msgs = build_prompt("PERSONA", "摘要", [], "KO", "hi", lore="LORE")
     assert msgs[0] == {"role": "system", "content": "LORE"}
     assert msgs[1] == {"role": "system", "content": "PERSONA"}
-    assert msgs[2]["role"] == "system" and "摘要" in msgs[2]["content"]
-    assert msgs[-1] == {"role": "user", "content": "KO: hi"}
+    # 摘要放在 user 角色（標明是參考資料），與緊接的當前訊息合併
+    assert len(msgs) == 3 and msgs[2]["role"] == "user"
+    assert "<摘要>\n摘要\n</摘要>" in msgs[2]["content"]
+    assert msgs[2]["content"].endswith("\nKO: hi")
 
 
 def test_prompt_without_lore_unchanged():
