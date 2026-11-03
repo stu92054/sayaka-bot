@@ -6,10 +6,11 @@ from types import SimpleNamespace
 import pytest
 
 from bot.config import Config
-from bot.llm import yes_probability_from
+from bot.chat import INTERJECT_JUDGE_TIMEOUT
+from bot.llm import LLMError, yes_probability_from
 from bot.triggers import Trigger, detect_trigger, interject_rate
 
-from .conftest import BOT_ID, make_config, make_message
+from .conftest import BOT_ID, HANG, make_config, make_message
 
 CH, OTHER_CH = 500, 501
 
@@ -190,3 +191,42 @@ def test_config_validation():
     problems = Config.from_env({"INTERJECT_THRESHOLD": "1.5", "INTERJECT_KEYWORD_RATE": "-1"}).validate()
     assert any("INTERJECT_THRESHOLD" in p for p in problems)
     assert any("INTERJECT_KEYWORD_RATE" in p for p in problems)
+
+
+# --- 與逾時處理的整合（判斷也經過 _complete） ---
+
+async def test_judge_hanging_request_times_out_and_retries(make_service, fake_openai):
+    svc = make_service(api_timeout_seconds=0.01)
+    fake_openai.completions.replies = [HANG, {"top": [("是", 0.9), ("否", 0.1)]}]
+    p = await svc.llm.yes_probability([{"role": "user", "content": "?"}])
+    assert p == pytest.approx(0.9)
+    assert len(fake_openai.completions.calls) == 2
+
+
+async def test_judge_server_error_body_is_retried(make_service, fake_openai):
+    svc = make_service()
+    queue_timeout = SimpleNamespace(choices=None, usage=None, error={"message": "unable to start processing"})
+    fake_openai.completions.replies = [queue_timeout, {"top": [("否", 1.0)]}]
+    assert await svc.llm.yes_probability([{"role": "user", "content": "?"}]) == 0.0
+    assert len(fake_openai.completions.calls) == 2
+
+
+async def test_judge_total_timeout(make_service, fake_openai):
+    svc = make_service(api_timeout_seconds=5)
+    fake_openai.completions.default = HANG
+    with pytest.raises(LLMError):
+        await svc.llm.yes_probability([{"role": "user", "content": "?"}], total_timeout=0.05)
+    assert len(fake_openai.completions.calls) == 1
+
+
+async def test_interject_gives_up_when_judge_hangs(make_service, fake_openai, clock, monkeypatch):
+    import bot.chat
+    monkeypatch.setattr(bot.chat, "INTERJECT_JUDGE_TIMEOUT", 0.05)
+    svc = interject_service(make_service, clock, api_timeout_seconds=5)
+    fake_openai.completions.default = HANG
+    assert await svc.handle_message(make_message("今天好累"), BOT_ID) is None
+    assert len(fake_openai.completions.calls) == 1  # 沒有重試到 3 次
+
+
+def test_judge_timeout_is_short():
+    assert INTERJECT_JUDGE_TIMEOUT <= 60

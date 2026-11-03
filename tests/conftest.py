@@ -1,6 +1,7 @@
 """共用 fixture：假的 DeepSeek client、假的 Discord 訊息。全程不連網。"""
 from __future__ import annotations
 
+import asyncio
 import math
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -23,10 +24,15 @@ BOT_ID = 42
 ADMIN_ID = 7
 
 
+HANG = object()  # 模擬 DeepSeek 排隊時一直保持連線、遲遲不回應
+
+
 class FakeCompletions:
     def __init__(self):
         self.calls: list[dict] = []
-        self.replies: list = []  # str、(str, finish_reason)、dict（含 logprobs）或 Exception，依序取用；空了就回 default
+        # str、(str, finish_reason)、dict（含 logprobs）、Exception、HANG 或 SimpleNamespace（原樣回傳的回應物件），
+        # 依序取用；空了就回 default
+        self.replies: list = []
         self.default = "哼，才不是特地回你的。"
         self.usage = dict(prompt_tokens=100, completion_tokens=20,
                           prompt_cache_hit_tokens=60, prompt_cache_miss_tokens=40)
@@ -36,6 +42,10 @@ class FakeCompletions:
         item = self.replies.pop(0) if self.replies else self.default
         if isinstance(item, Exception):
             raise item
+        if item is HANG:
+            await asyncio.Event().wait()
+        if isinstance(item, SimpleNamespace):
+            return item
         finish = "stop"
         logprobs = None
         if isinstance(item, tuple):  # (content, finish_reason)

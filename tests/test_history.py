@@ -1,4 +1,4 @@
-from bot.history import build_prompt, merge_consecutive
+from bot.history import SUMMARY_PREFIX, build_prompt, merge_consecutive
 from bot.storage import StoredMessage
 
 CH = 500
@@ -12,12 +12,13 @@ def test_prompt_order_persona_summary_recent_current():
     ]
     msgs = build_prompt("PERSONA", "大家昨天在聊考試", recent, "KO", "大小姐安慰我")
     assert msgs[0] == {"role": "system", "content": "PERSONA"}
-    assert msgs[1]["role"] == "system" and "大家昨天在聊考試" in msgs[1]["content"]
-    assert msgs[2] == {"role": "user", "content": "KO: 今天好累"}
-    assert msgs[3] == {"role": "assistant", "content": "哼，誰叫你熬夜。"}
+    # 摘要放在 user 角色並標明是參考資料，後面緊接的 user 訊息會合併進來
+    assert msgs[1]["role"] == "user"
+    assert msgs[1]["content"] == f"{SUMMARY_PREFIX}<摘要>\n大家昨天在聊考試\n</摘要>\nKO: 今天好累"
+    assert msgs[2] == {"role": "assistant", "content": "哼，誰叫你熬夜。"}
     # 相鄰的 user 訊息會合併，當前訊息在最後
-    assert msgs[4] == {"role": "user", "content": "Amy: 我也是\nKO: 大小姐安慰我"}
-    assert len(msgs) == 5
+    assert msgs[3] == {"role": "user", "content": "Amy: 我也是\nKO: 大小姐安慰我"}
+    assert len(msgs) == 4
 
 
 def test_prompt_without_summary_keeps_persona_first():
@@ -28,7 +29,10 @@ def test_prompt_without_summary_keeps_persona_first():
 def test_persona_prefix_stable_across_calls():
     a = build_prompt("PERSONA", "S", [], "KO", "1")
     b = build_prompt("PERSONA", "S", [StoredMessage(1, CH, "A", "x", False)], "KO", "2")
-    assert a[:2] == b[:2]
+    assert a[0] == b[0]
+    # 摘要區塊的文字也相同，前綴快取仍能涵蓋到摘要為止
+    block = f"{SUMMARY_PREFIX}<摘要>\nS\n</摘要>\n"
+    assert a[1]["content"].startswith(block) and b[1]["content"].startswith(block)
 
 
 def test_merge_does_not_merge_system():

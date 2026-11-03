@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import time
 from datetime import datetime
 from typing import Any, Awaitable, Callable
 from zoneinfo import ZoneInfo
@@ -58,6 +59,25 @@ class _Interrupted(Exception):
     pass
 
 
+class _ServerError(Exception):
+    """HTTP 200 但回應裡沒有 choices。
+
+    DeepSeek 忙碌時會先回 200、持續送換行保持連線，排隊逾時後才在內容裡放 {"error": {...}}；
+    SDK 照樣解析成 ChatCompletion，只是 choices 為 None。
+    """
+
+
+def server_error_message(resp: Any) -> str:
+    """取出伺服器在回應內容裡附的錯誤訊息（不含請求內容與 key，可以寫進 log）。"""
+    error = getattr(resp, "error", None)
+    if error is None:
+        extra = getattr(resp, "model_extra", None) or {}
+        error = extra.get("error")
+    if isinstance(error, dict):
+        error = error.get("message") or error
+    return str(error)[:200] if error else "回應沒有 choices"
+
+
 class LLMClient:
     def __init__(
         self,
@@ -70,6 +90,7 @@ class LLMClient:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         now: Callable[[], datetime] | None = None,
         calendar: Any | None = None,
+        monotonic: Callable[[], float] = time.monotonic,
     ):
         self.config = config
         self.storage = storage
@@ -79,6 +100,7 @@ class LLMClient:
         self.max_attempts = max_attempts
         self.base_delay = base_delay
         self._sleep = sleep
+        self._monotonic = monotonic
         self.calendar = calendar  # HolidayCalendar，判斷高峰時段用
         tz = ZoneInfo(config.timezone)
         self._now = now or (lambda: datetime.now(tz))
@@ -131,6 +153,9 @@ class LLMClient:
     def effort_for(self, model: str) -> str:
         return self.config.reasoning_effort_deep if self._is_deep(model) else self.config.reasoning_effort_default
 
+    def timeout_for(self, model: str) -> float:
+        return self.config.deep_api_timeout_seconds if self._is_deep(model) else self.config.api_timeout_seconds
+
     async def chat(
         self,
         messages: list[dict[str, str]],
@@ -141,9 +166,12 @@ class LLMClient:
         temperature: float | None = None,
         thinking: str | None = None,
         reasoning_effort: str | None = None,
+        total_timeout: float | None = None,
     ) -> str:
+        """total_timeout：含重試與等待的總時限（秒）；None = 只受單次逾時與重試次數限制。"""
         choice = await self._complete(messages, model=model, max_tokens=max_tokens, purpose=purpose,
-                                      temperature=temperature, thinking=thinking, reasoning_effort=reasoning_effort)
+                                      temperature=temperature, thinking=thinking, reasoning_effort=reasoning_effort,
+                                      total_timeout=total_timeout)
         # 思維鏈在 message.reasoning_content；沒帶 tools 時下一輪不需回傳，只取最終回答
         return (getattr(choice.message, "content", None) or "").strip()
 
@@ -155,13 +183,15 @@ class LLMClient:
         purpose: str = "judge",
         yes: tuple[str, ...] = ("是",),
         no: tuple[str, ...] = ("否",),
+        total_timeout: float | None = None,
     ) -> float:
         """讓模型回答一個字（是／否），用 logprobs 算出回答「是」的機率（0～1）。
 
         沒有 logprobs 時退回看回答的文字：「是」= 1、其他 = 0。
         """
         choice = await self._complete(messages, model=model, max_tokens=1, purpose=purpose, temperature=0,
-                                      thinking="disabled", logprobs=True, expect_truncation=True)
+                                      thinking="disabled", logprobs=True, expect_truncation=True,
+                                      total_timeout=total_timeout)
         return yes_probability_from(choice, yes, no)
 
     async def _complete(
@@ -176,8 +206,12 @@ class LLMClient:
         reasoning_effort: str | None = None,
         logprobs: bool = False,
         expect_truncation: bool = False,
+        total_timeout: float | None = None,
     ) -> Any:
-        """呼叫 API（含預算檢查、重試、用量紀錄），回傳 choices[0]。"""
+        """呼叫 API（含預算檢查、單次逾時、總時限、重試、用量紀錄），回傳 choices[0]。
+
+        chat 與 yes_probability 都經過這裡，所以插話判斷也有逾時保護。
+        """
         reason = self.budget_status()
         if reason is not None:
             log.warning("超過每日預算，不呼叫 API（%s）：%s", purpose, reason)
@@ -204,10 +238,21 @@ class LLMClient:
             kwargs["top_logprobs"] = 10
 
         last_exc: Exception | None = None
+        detail = ""
+        started = self._monotonic()
         for attempt in range(1, self.max_attempts + 1):
+            timeout = self.timeout_for(model)
+            if total_timeout is not None:
+                remaining = total_timeout - (self._monotonic() - started)
+                if remaining <= 0:
+                    log.warning("DeepSeek 呼叫超過總時限 %.0f 秒，不再重試（%s）", total_timeout, purpose)
+                    break
+                timeout = min(timeout, remaining)
             try:
-                resp = await self.client.chat.completions.create(**kwargs)
+                resp = await asyncio.wait_for(self.client.chat.completions.create(**kwargs), timeout)
                 self._record(model, purpose, getattr(resp, "usage", None))
+                if not getattr(resp, "choices", None):
+                    raise _ServerError(server_error_message(resp))
                 choice = resp.choices[0]
                 finish = getattr(choice, "finish_reason", None)
                 if finish in RETRYABLE_FINISH_REASONS:
@@ -217,9 +262,15 @@ class LLMClient:
                 raise LLMError(f"DeepSeek 呼叫失敗：{describe_error(exc)}") from exc
             except Exception as exc:  # noqa: BLE001 - 網路錯誤、逾時、429、5xx 等都重試
                 last_exc = exc
-                log.warning("DeepSeek 呼叫失敗（第 %d/%d 次，%s）：%s",
-                            attempt, self.max_attempts, purpose,
-                            f"finish_reason={exc}" if isinstance(exc, _Interrupted) else describe_error(exc))
+                if isinstance(exc, _Interrupted):
+                    detail = f"finish_reason={exc}"
+                elif isinstance(exc, _ServerError):
+                    detail = f"伺服器回報錯誤：{exc}"
+                elif isinstance(exc, asyncio.TimeoutError):
+                    detail = f"逾時（{timeout:.0f} 秒）"
+                else:
+                    detail = describe_error(exc)
+                log.warning("DeepSeek 呼叫失敗（第 %d/%d 次，%s）：%s", attempt, self.max_attempts, purpose, detail)
                 if attempt < self.max_attempts:
                     await self._sleep(self.base_delay * (2 ** (attempt - 1)))
                 continue
@@ -231,7 +282,7 @@ class LLMClient:
                 log.warning("回覆達到 max_tokens 上限（%s，max_tokens=%s，最終回答 %d 字）",
                             purpose, kwargs["max_tokens"], len(content))
             return choice
-        raise LLMError(f"DeepSeek 呼叫失敗：{describe_error(last_exc)}") from last_exc
+        raise LLMError(f"DeepSeek 呼叫失敗：{detail if last_exc is not None else '超過總時限'}") from last_exc
 
     def _record(self, model: str, purpose: str, usage: Any) -> None:
         if usage is None:

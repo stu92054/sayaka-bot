@@ -26,6 +26,9 @@ INTERJECT_JUDGE_SUFFIX = (
     "而且你真的有話想說？只回答一個字：是 或 否。）"
 )
 HOUR = 3600.0
+# 插話判斷含重試的總時限（秒）。判斷只要一個字，正常幾秒內就回來；
+# DeepSeek 排隊時與其等上幾分鐘（話題早就過了），不如放棄這次插話
+INTERJECT_JUDGE_TIMEOUT = 30.0
 
 
 @dataclass
@@ -33,6 +36,18 @@ class Reply:
     chunks: list[str]
     trigger: Trigger
     recorded: bool  # 是否為模型產生（會寫入歷史）
+
+
+RESERVED_AUTHOR_NAMES = ("system", "系統", "系統管理員", "管理員", "admin", "assistant", "bot")
+
+
+def display_author(name: str, config: Config) -> str:
+    """顯示名稱可以自己改：撞名 bot 或像「SYSTEM」「系統管理員」的，在 prompt 裡標成一般成員。"""
+    key = name.strip().casefold()
+    reserved = {n.casefold() for n in (config.bot_display_name, *config.bot_names, *RESERVED_AUTHOR_NAMES)}
+    if key in reserved or key.startswith(("system", "系統")):
+        return f"{name}（成員暱稱）"
+    return name
 
 
 def message_text(message: Any) -> str:
@@ -77,7 +92,7 @@ class ChatService:
             return None
 
         channel_id = message.channel.id
-        author = message.author.display_name
+        author = display_author(message.author.display_name, self.config)
         content = message_text(message)
         if not content:
             return None
@@ -109,10 +124,10 @@ class ChatService:
 
     async def generate(self, channel_id: int, prompt: list[dict[str, str]], trigger: Trigger,
                        *, model: str, purpose: str = "chat", max_tokens: int | None = None,
-                       thinking: str | None = None) -> Reply:
+                       thinking: str | None = None, total_timeout: float | None = None) -> Reply:
         try:
             text = await self.llm.chat(prompt, model=model, max_tokens=max_tokens or self.config.max_reply_tokens,
-                                       purpose=purpose, thinking=thinking)
+                                       purpose=purpose, thinking=thinking, total_timeout=total_timeout)
         except BudgetExceeded:
             return Reply([self.replies["budget_exceeded"]], trigger, recorded=False)
         except LLMError:
@@ -130,13 +145,16 @@ class ChatService:
         return Reply(split_message(text), trigger, recorded=True)
 
     async def deep(self, channel_id: int, author: str, question: str) -> Reply:
+        author = display_author(author, self.config)
         prompt = self.history.build_prompt(channel_id, self.persona.text, author, question, self._lore_text(),
                                            now=self._now())
         self.history.add(channel_id, author, question)
-        # 思考模式的推理內容也算在 max_tokens 內，所以 /deep 給較大的上限
+        # 思考模式的推理內容也算在 max_tokens 內，所以 /deep 給較大的上限；
+        # 總時限要短於 Discord 互動的 15 分鐘，失敗時才來得及回覆錯誤訊息
         return await self.generate(channel_id, prompt, Trigger.MENTION, model=self.config.model_deep,
                                    purpose="deep", max_tokens=self.config.deep_max_tokens,
-                                   thinking=self.config.thinking_deep)
+                                   thinking=self.config.thinking_deep,
+                                   total_timeout=self.config.deep_total_timeout_seconds)
 
     def interject_allowed(self, channel_id: int) -> bool:
         """頻道層級的插話限制：她上次發言後的冷卻、每小時上限。"""
@@ -164,7 +182,8 @@ class ChatService:
         judge = [dict(m) for m in prompt]
         judge[-1]["content"] += INTERJECT_JUDGE_SUFFIX
         try:
-            p = await self.llm.yes_probability(judge, model=self.config.model_default, purpose="interject_judge")
+            p = await self.llm.yes_probability(judge, model=self.config.model_default, purpose="interject_judge",
+                                               total_timeout=INTERJECT_JUDGE_TIMEOUT)
         except (BudgetExceeded, LLMError, ContentFiltered):
             return False
         threshold = self.config.interject_threshold
