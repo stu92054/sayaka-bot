@@ -1,0 +1,183 @@
+"""進入點：python -m bot.main"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import sys
+
+import discord
+from discord import app_commands
+
+from .chat import ChatService
+from .commands import register_commands
+from .config import Config
+from .history import HistoryManager
+from .llm import LLMClient
+from .persona import Persona
+from .storage import Storage
+from .triggers import Cooldown, detect_trigger
+
+log = logging.getLogger("bot")
+
+
+class RedactSecretsFilter(logging.Filter):
+    """把 log 中出現的 token / API key 換成 ***。"""
+
+    def __init__(self, secrets: list[str]):
+        super().__init__()
+        self.secrets = [s for s in secrets if s and len(s) >= 6]
+
+    def redact(self, text: str) -> str:
+        for s in self.secrets:
+            text = text.replace(s, "***")
+        return text
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not self.secrets:
+            return True
+        try:
+            msg = record.getMessage()
+        except Exception:  # noqa: BLE001
+            return True
+        redacted = self.redact(msg)
+        if redacted != msg:
+            record.msg, record.args = redacted, None
+        return True
+
+
+def setup_logging(config: Config) -> None:
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    handler.addFilter(RedactSecretsFilter(config.secrets()))
+    root = logging.getLogger()
+    root.handlers[:] = [handler]
+    root.setLevel(config.log_level)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("discord.http").setLevel(logging.WARNING)
+
+
+class TsundereBot(discord.Client):
+    def __init__(self, config: Config, storage: Storage, llm: LLMClient, persona: Persona):
+        intents = discord.Intents.default()
+        intents.message_content = True  # 需要在 Developer Portal 開啟 Message Content Intent
+        # 不允許 @everyone、@here 與角色提及（透過 Client.allowed_mentions 屬性存取）
+        mentions = discord.AllowedMentions(everyone=False, roles=False, users=True, replied_user=True)
+        super().__init__(intents=intents, allowed_mentions=mentions)
+        self.config = config
+        self.storage = storage
+        self.llm = llm
+        self.persona = persona
+        self.history = HistoryManager(storage, llm, config.history_max_messages)
+        self.chat = ChatService(config, llm, self.history, persona, Cooldown(config.user_cooldown_seconds))
+        self.tree = app_commands.CommandTree(self)
+        self._member_cache: dict[int, bool] = {}
+        self._bg_tasks: set[asyncio.Task] = set()
+        register_commands(self)
+
+    async def setup_hook(self) -> None:
+        for gid in self.config.allowed_guild_ids:
+            guild = discord.Object(id=gid)
+            self.tree.copy_global_to(guild=guild)
+            try:
+                await self.tree.sync(guild=guild)
+                log.info("已同步 slash commands 到伺服器 %s", gid)
+            except discord.HTTPException as exc:
+                log.warning("同步 slash commands 到 %s 失敗：%s", gid, exc)
+
+    async def on_ready(self) -> None:
+        log.info("登入為 %s（id=%s）", self.user, self.user.id if self.user else "?")
+
+    async def dm_allowed(self, user_id: int) -> bool:
+        """私訊僅限管理員或同在允許伺服器中的成員。"""
+        if user_id in self.config.admin_user_ids:
+            return True
+        if user_id in self._member_cache:
+            return self._member_cache[user_id]
+        allowed = False
+        for gid in self.config.allowed_guild_ids:
+            guild = self.get_guild(gid)
+            if guild is None:
+                continue
+            if guild.get_member(user_id) is not None:
+                allowed = True
+                break
+            try:
+                await guild.fetch_member(user_id)
+                allowed = True
+                break
+            except discord.NotFound:
+                continue
+            except discord.HTTPException as exc:
+                log.warning("查詢成員失敗：%s", exc)
+        self._member_cache[user_id] = allowed
+        return allowed
+
+    def schedule_summary(self, channel_id: int) -> None:
+        if not self.history.needs_summary(channel_id):
+            return
+        task = asyncio.create_task(self.history.maybe_summarize(channel_id))
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
+
+    async def on_message(self, message: discord.Message) -> None:
+        if self.user is None or message.author.bot:
+            return
+        try:
+            dm_ok = False
+            if message.guild is None:
+                dm_ok = await self.dm_allowed(message.author.id)
+            # 回覆的訊息若不在快取，嘗試抓回來判斷是不是回覆 bot
+            ref = message.reference
+            if ref is not None and ref.resolved is None and ref.message_id:
+                try:
+                    ref.resolved = await message.channel.fetch_message(ref.message_id)
+                except discord.HTTPException:
+                    pass
+
+            reply = await self._handle_with_typing(message, dm_ok)
+            if reply:
+                for i, chunk in enumerate(reply.chunks):
+                    if i == 0:
+                        await message.reply(chunk, mention_author=False, allowed_mentions=self.allowed_mentions)
+                    else:
+                        await message.channel.send(chunk, allowed_mentions=self.allowed_mentions)
+            if message.guild is None and not dm_ok:
+                return
+            self.schedule_summary(message.channel.id)
+        except Exception:  # noqa: BLE001 - 不讓單一訊息讓 bot 崩潰
+            log.exception("處理訊息時發生錯誤")
+
+    async def _handle_with_typing(self, message: discord.Message, dm_ok: bool):
+        # 先判斷是否會觸發，觸發才顯示「輸入中…」（插話要等判斷後才知道，不顯示）
+        will_trigger = detect_trigger(message, self.user.id, self.config, dm_allowed=dm_ok, rng=lambda: 1.0)
+        if will_trigger is None:
+            return await self.chat.handle_message(message, self.user.id, dm_allowed=dm_ok)
+        async with message.channel.typing():
+            return await self.chat.handle_message(message, self.user.id, dm_allowed=dm_ok)
+
+
+def main() -> int:
+    config = Config.from_env()
+    setup_logging(config)
+    problems = config.validate()
+    fatal = [p for p in problems if "TOKEN" in p or "API_KEY" in p]
+    for p in problems:
+        log.warning("設定問題：%s", p)
+    if fatal:
+        log.error("缺少必要設定，請複製 .env.example 為 .env 並填寫")
+        return 1
+    log.info("設定：%r", config)
+
+    persona = Persona(config.persona_path)
+    storage = Storage(config.db_path)
+    llm = LLMClient(config, storage)
+    bot = TsundereBot(config, storage, llm, persona)
+    try:
+        bot.run(config.discord_token, log_handler=None)
+    finally:
+        storage.close()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
