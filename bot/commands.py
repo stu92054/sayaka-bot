@@ -37,9 +37,12 @@ def format_usage(bot: "TsundereBot") -> str:
             + f"，約 ¥{r.cost:.4f}"
         )
     lines.append(f"預估費用：約 ¥{bot.llm.estimate_cost(rows):.4f}（依 DeepSeek 價目表，已區分高峰／空閒時段）")
-    now = bot.llm.now()
-    lines.append("目前為 **高峰時段**（價格 ×1）" if bot.config.is_peak(now)
+    lines.append("目前為 **高峰時段**（價格 ×1）" if bot.llm.is_peak()
                  else f"目前為空閒時段（價格 ×{bot.config.offpeak_ratio:g}）")
+    cal = bot.llm.calendar
+    if cal is not None:
+        years = cal.loaded_years()
+        lines.append(f"節假日資料：{', '.join(map(str, years)) if years else '尚未載入（只用 CN_HOLIDAYS）'}")
     return "\n".join(lines)
 
 

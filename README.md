@@ -95,7 +95,9 @@ cp .env.example .env
 | `LOG_LEVEL` | `INFO` | log 等級 |
 | `PRICE_TABLE` | 內建 | 覆寫高峰時段價目表，格式 `model:命中:未命中:輸出;...`（元 / 百萬 tokens） |
 | `PRICE_OFFPEAK_RATIO` | `0.5` | 空閒時段價格比例 |
-| `CN_HOLIDAYS` | — | 中國法定節假日（整天算空閒時段），逗號分隔 `YYYY-MM-DD` |
+| `HOLIDAY_SOURCE_URLS` | holiday-cn（GitHub Raw、jsDelivr） | 節假日資料來源，逗號分隔依序嘗試，`{year}` 換成年份；`none` 停用 |
+| `HOLIDAY_MAKEUP_WORKDAY_PEAK` | `false` | 調休補班的週末是否算高峰 |
+| `CN_HOLIDAYS` | — | 額外手動指定的節假日（整天算空閒），逗號分隔 `YYYY-MM-DD` |
 
 ### 費用估算
 
@@ -107,7 +109,14 @@ cp .env.example .env
 | `deepseek-v4-pro` | 0.30 元 | 9 元 | 27 元 |
 
 以上是高峰時段每百萬 tokens 的價格；空閒時段減半。高峰時段為北京時間週一至週五 9:00–12:00、14:00–18:00，
-週末與中國法定節假日全天算空閒。法定節假日無法自動判斷，請用 `CN_HOLIDAYS` 設定。
+週末與中國法定節假日全天算空閒。
+
+**節假日資料**：自動從 [NateScarlet/holiday-cn](https://github.com/NateScarlet/holiday-cn)（每日抓取國務院公告）下載
+今年與明年的資料，啟動時在背景下載、之後每天更新一次，並快取在 `data/holidays/{年份}.json`。
+下載失敗時沿用快取；都沒有時只用 `CN_HOLIDAYS`。明年的安排通常在 11～12 月公告，公告前會自動略過。
+
+調休補班日（例如國慶前的週六）是否算高峰，DeepSeek 文件沒有明講。預設照字面「週末全天為空閒時段」計算，
+若實際帳單顯示補班日按高峰計價，可設 `HOLIDAY_MAKEUP_WORKDAY_PEAK=true`。
 
 ### 思考模式
 
@@ -204,6 +213,7 @@ bot/
   commands.py   # slash commands
   storage.py    # SQLite
   persona.py    # persona.md 載入
+  holidays.py   # 中國節假日／調休資料（判斷高峰時段）
   text.py       # 2000 字元分段
 persona.md
 tests/

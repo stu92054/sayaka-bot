@@ -12,6 +12,7 @@ from .chat import ChatService
 from .commands import register_commands
 from .config import Config
 from .history import HistoryManager
+from .holidays import HolidayCalendar, pricing_years
 from .llm import LLMClient
 from .persona import Persona
 from .storage import Storage
@@ -75,6 +76,11 @@ class TsundereBot(discord.Client):
         register_commands(self)
 
     async def setup_hook(self) -> None:
+        cal = self.llm.calendar
+        if cal is not None and cal.sources:
+            # 背景下載，不拖慢登入；啟動時先用本機快取
+            task = asyncio.create_task(cal.run_periodic_refresh(pricing_years, run_immediately=True))
+            self._bg_tasks.add(task)
         for gid in self.config.allowed_guild_ids:
             guild = discord.Object(id=gid)
             self.tree.copy_global_to(guild=guild)
@@ -170,7 +176,13 @@ def main() -> int:
 
     persona = Persona(config.persona_path)
     storage = Storage(config.db_path)
-    llm = LLMClient(config, storage)
+    calendar = HolidayCalendar(
+        cache_dir=config.db_path.parent / "holidays",
+        sources=config.holiday_sources,
+        manual_off_days=config.cn_holidays,
+    )
+    calendar.load_cache(pricing_years())
+    llm = LLMClient(config, storage, calendar=calendar)
     bot = TsundereBot(config, storage, llm, persona)
     try:
         bot.run(config.discord_token, log_handler=None)

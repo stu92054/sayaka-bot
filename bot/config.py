@@ -5,7 +5,11 @@ import os
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
+
+if TYPE_CHECKING:
+    from .holidays import HolidayCalendar
 
 from dotenv import load_dotenv
 
@@ -78,6 +82,20 @@ def _thinking(value: str, key: str) -> str:
     return value
 
 
+def _bool(value: str) -> bool:
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _holiday_sources(value: str) -> tuple[str, ...]:
+    from .holidays import DEFAULT_SOURCES
+
+    if not value:
+        return DEFAULT_SOURCES
+    if value.strip().lower() in ("none", "off", "disabled"):
+        return ()
+    return _str_list(value)
+
+
 def _effort(value: str, key: str) -> str:
     value = value.lower()
     if value not in EFFORT_CHOICES:
@@ -126,6 +144,10 @@ class Config:
     prices: dict[str, ModelPrice] = field(default_factory=lambda: dict(DEFAULT_PRICES))
     offpeak_ratio: float = 0.5
     cn_holidays: frozenset[date] = frozenset()
+    # 自動下載節假日資料的來源（空 = 停用），{year} 會被替換成年份
+    holiday_sources: tuple[str, ...] = ()
+    # 調休補班的週末是否算高峰（DeepSeek 原文：週末全天為空閒時段，預設照字面不算）
+    makeup_workday_peak: bool = False
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None, *, load_dotenv_file: bool = True) -> "Config":
@@ -159,6 +181,8 @@ class Config:
             prices=_price_table(_get(env, "PRICE_TABLE")),
             offpeak_ratio=float(_get(env, "PRICE_OFFPEAK_RATIO", "0.5")),
             cn_holidays=_date_list(_get(env, "CN_HOLIDAYS")),
+            holiday_sources=_holiday_sources(_get(env, "HOLIDAY_SOURCE_URLS")),
+            makeup_workday_peak=_bool(_get(env, "HOLIDAY_MAKEUP_WORKDAY_PEAK", "false")),
         )
 
     def validate(self) -> list[str]:
@@ -179,17 +203,23 @@ class Config:
     def price_for(self, model: str) -> ModelPrice:
         return self.prices.get(model, FALLBACK_PRICE)
 
-    def is_peak(self, when: datetime) -> bool:
-        """when 必須帶時區。"""
+    def is_peak(self, when: datetime, calendar: "HolidayCalendar | None" = None) -> bool:
+        """when 必須帶時區。calendar 提供自動下載的節假日與調休資料。"""
         local = when.astimezone(PRICING_TZ)
-        if local.weekday() >= 5 or local.date() in self.cn_holidays:
+        day = local.date()
+        if day in self.cn_holidays or (calendar is not None and calendar.is_off_day(day)):
             return False
+        if local.weekday() >= 5:
+            makeup = calendar is not None and calendar.is_makeup_workday(day)
+            if not (self.makeup_workday_peak and makeup):
+                return False
         return any(start <= local.hour < end for start, end in PEAK_HOURS)
 
-    def call_cost(self, model: str, cache_hit: int, cache_miss: int, output: int, when: datetime) -> float:
+    def call_cost(self, model: str, cache_hit: int, cache_miss: int, output: int, when: datetime,
+                  calendar: "HolidayCalendar | None" = None) -> float:
         """單次呼叫費用（元）。"""
         p = self.price_for(model)
-        ratio = 1.0 if self.is_peak(when) else self.offpeak_ratio
+        ratio = 1.0 if self.is_peak(when, calendar) else self.offpeak_ratio
         return (cache_hit * p.cache_hit + cache_miss * p.cache_miss + output * p.output) * ratio / 1_000_000
 
     def secrets(self) -> list[str]:

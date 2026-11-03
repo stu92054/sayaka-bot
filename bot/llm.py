@@ -49,6 +49,7 @@ class LLMClient:
         base_delay: float = 1.0,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         now: Callable[[], datetime] | None = None,
+        calendar: Any | None = None,
     ):
         self.config = config
         self.storage = storage
@@ -56,11 +57,15 @@ class LLMClient:
         self.max_attempts = max_attempts
         self.base_delay = base_delay
         self._sleep = sleep
+        self.calendar = calendar  # HolidayCalendar，判斷高峰時段用
         tz = ZoneInfo(config.timezone)
         self._now = now or (lambda: datetime.now(tz))
 
     def now(self) -> datetime:
         return self._now()
+
+    def is_peak(self, when: datetime | None = None) -> bool:
+        return self.config.is_peak(when or self._now(), self.calendar)
 
     def today(self) -> str:
         return self._now().strftime("%Y-%m-%d")
@@ -160,8 +165,8 @@ class LLMClient:
         reasoning = getattr(getattr(usage, "completion_tokens_details", None), "reasoning_tokens", None)
         reasoning = int(reasoning or 0)
         now = self._now()
-        peak = self.config.is_peak(now)
-        cost = self.config.call_cost(model, hit, miss, completion, now)
+        peak = self.config.is_peak(now, self.calendar)
+        cost = self.config.call_cost(model, hit, miss, completion, now, self.calendar)
         self.storage.record_usage(self.today(), model, purpose, prompt, completion, hit, miss, cost=cost, peak=peak,
                                   reasoning_tokens=reasoning)
         log.info("用量 %s/%s：in=%d (hit=%d) out=%d (推理 %d) ¥%.5f%s", model, purpose, prompt, hit, completion,
