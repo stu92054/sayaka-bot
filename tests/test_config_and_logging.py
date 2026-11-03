@@ -20,7 +20,7 @@ def test_config_from_env_parses_lists_and_comments():
     assert cfg.bot_names == ("大小姐", "Ojou")
     assert cfg.history_max_messages == 30
     assert cfg.random_interject_rate == 0.05
-    assert cfg.model_default == "deepseek-flash" and cfg.model_deep == "deepseek-v4-pro"
+    assert cfg.model_default == "deepseek-flash" and cfg.model_deep == "deepseek-flash"
     assert cfg.price_for("custom-model").output == 3
     assert cfg.validate() == []
 

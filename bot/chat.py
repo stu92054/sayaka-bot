@@ -15,6 +15,7 @@ from .lore import Lore
 from .persona import Persona
 from .replies import Replies
 from .text import split_message
+from .tools import WEB_TOOLS_GUIDE, Tool, ToolRunner, suppress_embeds
 from .triggers import Cooldown, Trigger, detect_trigger, is_ignored
 
 log = logging.getLogger(__name__)
@@ -71,6 +72,7 @@ class ChatService:
         replies: Replies | None = None,
         lore: Lore | None = None,
         clock: Callable[[], float] = time.monotonic,
+        web_tools: list[Tool] | None = None,
     ):
         self.config = config
         self.llm = llm
@@ -81,6 +83,7 @@ class ChatService:
         self.replies = replies or Replies()
         self.lore = lore
         self.clock = clock
+        self.web_tools = list(web_tools or [])
         # 插話控制（記憶體內，重啟後歸零）：各頻道她上次發言的時間、最近一小時的插話時間
         self._last_spoke: dict[int, float] = {}
         self._interjections: dict[int, deque[float]] = defaultdict(deque)
@@ -104,6 +107,7 @@ class ChatService:
         if trigger is not None:
             prompt = self.history.build_prompt(channel_id, self.persona.text, author, content, self._lore_text(),
                                                now=self._now())
+            prompt = self._with_tool_guide(prompt)
         self.history.add(channel_id, author, content)
 
         if trigger is None:
@@ -120,14 +124,27 @@ class ChatService:
         if not self.cooldown.try_acquire(message.author.id):
             return None
 
-        return await self.generate(channel_id, prompt, trigger, model=self.config.model_default)
+        runner = None
+        if self.tools_enabled:
+            # 插話不查資料（max_calls=0）：仍帶工具定義，prompt 開頭才和其他聊天一致、命中快取
+            runner = self._tool_runner(message.author.id, content, prompt,
+                                       max_calls=0 if trigger is Trigger.INTERJECT else None)
+        return await self.generate(channel_id, prompt, trigger, model=self.config.model_default, tool_runner=runner)
 
     async def generate(self, channel_id: int, prompt: list[dict[str, str]], trigger: Trigger,
                        *, model: str, purpose: str = "chat", max_tokens: int | None = None,
-                       thinking: str | None = None, total_timeout: float | None = None) -> Reply:
+                       thinking: str | None = None, total_timeout: float | None = None,
+                       reasoning_effort: str | None = None, call_timeout: float | None = None,
+                       tool_runner: ToolRunner | None = None) -> Reply:
+        max_tokens = max_tokens or self.config.max_reply_tokens
         try:
-            text = await self.llm.chat(prompt, model=model, max_tokens=max_tokens or self.config.max_reply_tokens,
-                                       purpose=purpose, thinking=thinking, total_timeout=total_timeout)
+            if tool_runner is not None:
+                text = await self.llm.chat_with_tools(prompt, tool_runner, model=model, max_tokens=max_tokens,
+                                                      purpose=purpose, max_rounds=tool_runner.max_calls)
+            else:
+                text = await self.llm.chat(prompt, model=model, max_tokens=max_tokens,
+                                           purpose=purpose, thinking=thinking, total_timeout=total_timeout,
+                                           reasoning_effort=reasoning_effort, call_timeout=call_timeout)
         except BudgetExceeded:
             return Reply([self.replies["budget_exceeded"]], trigger, recorded=False)
         except LLMError:
@@ -135,6 +152,8 @@ class ChatService:
         except ContentFiltered:
             return Reply([self.replies["content_filter"]], trigger, recorded=False)
         text = strip_leading_stamp(text)
+        if tool_runner is not None and tool_runner.used:
+            text = suppress_embeds(text)
         if not text:
             return Reply([self.replies["error"]], trigger, recorded=False)
         self.history.add(channel_id, self.bot_display_name, text, is_bot=True)
@@ -150,10 +169,13 @@ class ChatService:
                                            now=self._now())
         self.history.add(channel_id, author, question)
         # 思考模式的推理內容也算在 max_tokens 內，所以 /deep 給較大的上限；
-        # 總時限要短於 Discord 互動的 15 分鐘，失敗時才來得及回覆錯誤訊息
+        # 總時限要短於 Discord 互動的 15 分鐘，失敗時才來得及回覆錯誤訊息。
+        # 思考模式、強度、單次逾時都明確指定，不靠模型名稱判斷（MODEL_DEEP 可以和一般聊天同一個模型）
         return await self.generate(channel_id, prompt, Trigger.MENTION, model=self.config.model_deep,
                                    purpose="deep", max_tokens=self.config.deep_max_tokens,
                                    thinking=self.config.thinking_deep,
+                                   reasoning_effort=self.config.reasoning_effort_deep,
+                                   call_timeout=self.config.deep_api_timeout_seconds,
                                    total_timeout=self.config.deep_total_timeout_seconds)
 
     def interject_allowed(self, channel_id: int) -> bool:
@@ -183,13 +205,45 @@ class ChatService:
         judge[-1]["content"] += INTERJECT_JUDGE_SUFFIX
         try:
             p = await self.llm.yes_probability(judge, model=self.config.model_default, purpose="interject_judge",
-                                               total_timeout=INTERJECT_JUDGE_TIMEOUT)
+                                               total_timeout=INTERJECT_JUDGE_TIMEOUT,
+                                               tools=[t.spec() for t in self.web_tools] if self.tools_enabled else None)
         except (BudgetExceeded, LLMError, ContentFiltered):
             return False
         threshold = self.config.interject_threshold
         log.info("插話判斷（頻道 %s）：p=%.2f，門檻 %.2f → %s", channel_id, p, threshold,
                  "插話" if p >= threshold else "不插話")
         return p >= threshold
+
+    @property
+    def tools_enabled(self) -> bool:
+        return self.config.web_tools_enabled and bool(self.web_tools)
+
+    def _with_tool_guide(self, prompt: list[dict[str, str]]) -> list[dict[str, str]]:
+        """啟用工具時，在開頭的 system 訊息（原作資料、人設）之後加上工具說明。內容固定，不影響快取。"""
+        if not self.tools_enabled:
+            return prompt
+        i = 0
+        while i < len(prompt) and prompt[i]["role"] == "system":
+            i += 1
+        return prompt[:i] + [{"role": "system", "content": WEB_TOOLS_GUIDE}] + prompt[i:]
+
+    def _tool_runner(self, user_id: int, question: str, prompt: list[dict[str, str]],
+                     *, max_calls: int | None = None) -> ToolRunner:
+        day = self.llm.today()
+        limit = self.config.web_daily_limit_per_user
+        storage = self.history.storage
+        runner = ToolRunner(
+            tools=self.web_tools,
+            max_calls=self.config.web_max_tool_calls_per_reply if max_calls is None else max_calls,
+            question=question,
+            has_quota=lambda: limit <= 0 or storage.tool_uses_on(day, user_id) < limit,
+            on_use=lambda name: storage.record_tool_use(day, user_id, name),
+        )
+        # 只有對話中出現過的網址可以讀取（成員的發言與摘要；不含 system 訊息）
+        for m in prompt:
+            if m["role"] == "user":
+                runner.allow_urls_from(m["content"])
+        return runner
 
     def _now(self):
         """要附在 prompt 的現在時間（BOT_TIMEZONE）；SHOW_CURRENT_TIME=false 時不附。"""

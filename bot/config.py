@@ -47,6 +47,8 @@ PRICE_TABLES: dict[str, dict[str, ModelPrice]] = {
     ),
 }
 CURRENCY_SYMBOLS = {"USD": "$", "CNY": "¥"}
+# Search／Fetch API 每次成功請求的價格（不分高峰時段）：USD $0.75、CNY ¥5 / 每 1,000 次
+WEB_REQUEST_PRICES: dict[str, float] = {"USD": 0.75 / 1000, "CNY": 5.0 / 1000}
 FALLBACK_MODEL = "deepseek-flash"  # 不認得的模型以 flash 價格估算
 
 # 高峰時段：北京時間週一至週五 9:00-12:00、14:00-18:00（不含中國法定節假日）
@@ -156,7 +158,7 @@ class Config:
     # 歷史紀錄與摘要中 bot 的名字
     bot_display_name: str = "沙耶香"
     model_default: str = "deepseek-flash"
-    model_deep: str = "deepseek-v4-pro"
+    model_deep: str = "deepseek-flash"
     # 兩個模型預設都開啟思考模式；一般聊天關閉以節省 token、降低延遲，/deep 開啟
     thinking_default: str = "disabled"
     thinking_deep: str = "enabled"
@@ -190,6 +192,13 @@ class Config:
     # 同一頻道在她上次發言後幾分鐘內不插話；每頻道每小時最多插話幾次（0 = 不限制）
     interject_channel_cooldown_minutes: float = 10.0
     interject_max_per_hour: int = 3
+    # 查資料工具（DeepSeek Search／Fetch API），預設關閉
+    web_tools_enabled: bool = False
+    web_max_tool_calls_per_reply: int = 3
+    web_daily_limit_per_user: int = 20  # 0 = 不限制
+    web_search_results: int = 5
+    web_fetch_max_chars: int = 4000
+    web_timeout_seconds: float = 20.0
     deepseek_base_url: str = "https://api.deepseek.com"
     persona_path: Path = Path("persona.md")
     replies_path: Path = Path("replies.toml")
@@ -223,7 +232,7 @@ class Config:
             bot_names=_str_list(_get(env, "BOT_NAMES", "")),
             bot_display_name=_get(env, "BOT_DISPLAY_NAME", "沙耶香"),
             model_default=_get(env, "MODEL_DEFAULT", "deepseek-flash"),
-            model_deep=_get(env, "MODEL_DEEP", "deepseek-v4-pro"),
+            model_deep=_get(env, "MODEL_DEEP", "deepseek-flash"),
             thinking_default=_thinking(_get(env, "THINKING_DEFAULT", "disabled"), "THINKING_DEFAULT"),
             thinking_deep=_thinking(_get(env, "THINKING_DEEP", "enabled"), "THINKING_DEEP"),
             reasoning_effort_default=_effort(_get(env, "REASONING_EFFORT_DEFAULT", "low"), "REASONING_EFFORT_DEFAULT"),
@@ -245,6 +254,12 @@ class Config:
             interject_threshold=float(_get(env, "INTERJECT_THRESHOLD", "0.7")),
             interject_channel_cooldown_minutes=float(_get(env, "INTERJECT_CHANNEL_COOLDOWN_MINUTES", "10")),
             interject_max_per_hour=int(_get(env, "INTERJECT_MAX_PER_HOUR", "3")),
+            web_tools_enabled=_bool(_get(env, "WEB_TOOLS_ENABLED", "false")),
+            web_max_tool_calls_per_reply=int(_get(env, "WEB_MAX_TOOL_CALLS_PER_REPLY", "3")),
+            web_daily_limit_per_user=int(_get(env, "WEB_DAILY_LIMIT_PER_USER", "20")),
+            web_search_results=int(_get(env, "WEB_SEARCH_RESULTS", "5")),
+            web_fetch_max_chars=int(_get(env, "WEB_FETCH_MAX_CHARS", "4000")),
+            web_timeout_seconds=float(_get(env, "WEB_TIMEOUT_SECONDS", "20")),
             deepseek_base_url=_get(env, "DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
             persona_path=Path(_get(env, "PERSONA_PATH", "persona.md")),
             replies_path=Path(_get(env, "REPLIES_PATH", "replies.toml")),
@@ -279,6 +294,10 @@ class Config:
             problems.append("INTERJECT_THRESHOLD 必須介於 0 和 1")
         if min(self.api_timeout_seconds, self.deep_api_timeout_seconds, self.deep_total_timeout_seconds) <= 0:
             problems.append("API_TIMEOUT_SECONDS、DEEP_API_TIMEOUT_SECONDS、DEEP_TOTAL_TIMEOUT_SECONDS 必須大於 0")
+        if not 1 <= self.web_search_results <= 50:
+            problems.append("WEB_SEARCH_RESULTS 必須介於 1 和 50")
+        if self.web_max_tool_calls_per_reply < 1:
+            problems.append("WEB_MAX_TOOL_CALLS_PER_REPLY 至少要 1")
         if self.deep_total_timeout_seconds >= 900:
             problems.append("DEEP_TOTAL_TIMEOUT_SECONDS 要小於 900（Discord 互動 15 分鐘後失效，會送不出回覆）")
         return problems
@@ -292,6 +311,10 @@ class Config:
     @property
     def currency_symbol(self) -> str:
         return CURRENCY_SYMBOLS[self.price_currency]
+
+    @property
+    def web_request_price(self) -> float:
+        return WEB_REQUEST_PRICES[self.price_currency]
 
     def money(self, amount: float, digits: int = 4) -> str:
         return f"{self.currency_symbol}{amount:.{digits}f}"

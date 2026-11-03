@@ -24,6 +24,15 @@ CREATE TABLE IF NOT EXISTS summaries (
     updated_at REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS tool_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    day TEXT NOT NULL,
+    user_id INTEGER NOT NULL,
+    tool TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tool_usage_day_user ON tool_usage(day, user_id);
+
 CREATE TABLE IF NOT EXISTS usage (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     day TEXT NOT NULL,
@@ -179,6 +188,19 @@ class Storage:
             row = self._conn.execute(
                 "SELECT COALESCE(SUM(prompt_tokens + completion_tokens), 0) FROM usage WHERE day=?", (day,)
             ).fetchone()
+        return int(row[0])
+
+    # --- 工具使用次數（每人每日上限用） ---
+    def record_tool_use(self, day: str, user_id: int, tool: str) -> None:
+        with self._lock:
+            self._conn.execute("INSERT INTO tool_usage(day, user_id, tool, created_at) VALUES (?,?,?,?)",
+                               (day, user_id, tool, time.time()))
+            self._conn.commit()
+
+    def tool_uses_on(self, day: str, user_id: int) -> int:
+        with self._lock:
+            row = self._conn.execute("SELECT COUNT(*) FROM tool_usage WHERE day=? AND user_id=?",
+                                     (day, user_id)).fetchone()
         return int(row[0])
 
     def cost_on(self, day: str, currency: str | None = None) -> float:

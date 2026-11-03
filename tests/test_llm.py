@@ -104,7 +104,7 @@ async def test_thinking_disabled_for_chat_enabled_for_deep(make_service, fake_op
     assert call["temperature"] == 0
     await svc.deep(500, "KO", "難題")
     call = fake_openai.completions.calls[-1]
-    assert call["model"] == "deepseek-v4-pro"
+    assert call["model"] == "deepseek-flash"  # /deep 預設和一般聊天同一個模型，但仍開啟思考、強度 high
     assert call["extra_body"] == {"thinking": {"type": "enabled"}}
     assert call["max_tokens"] == 8000
     assert call["reasoning_effort"] == "high"
@@ -188,3 +188,20 @@ async def test_records_reasoning_tokens_and_cached_tokens_fallback(make_service,
     await svc.llm.chat([{"role": "user", "content": "hi"}])
     r = svc.llm.usage_today()[0]
     assert (r.cache_hit_tokens, r.cache_miss_tokens, r.reasoning_tokens) == (80, 20, 30)
+
+
+async def test_deep_settings_explicit_even_with_pro(make_service, fake_openai):
+    """MODEL_DEEP 設成其他模型（例如 pro）時，/deep 的設定一樣正確。"""
+    svc = make_service(model_deep="deepseek-v4-pro")
+    await svc.deep(500, "KO", "難題")
+    call = fake_openai.completions.calls[-1]
+    assert call["model"] == "deepseek-v4-pro"
+    assert call["extra_body"] == {"thinking": {"type": "enabled"}} and call["reasoning_effort"] == "high"
+
+
+async def test_chat_unaffected_by_same_deep_model(make_service, fake_openai):
+    """/deep 和一般聊天同模型時，一般聊天不會被當成 /deep（不開思考）。"""
+    svc = make_service()
+    await svc.llm.chat([{"role": "user", "content": "hi"}])
+    call = fake_openai.completions.calls[-1]
+    assert call["extra_body"] == {"thinking": {"type": "disabled"}} and "reasoning_effort" not in call
