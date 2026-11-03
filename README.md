@@ -98,6 +98,9 @@ cp .env.example .env
 | `REASONING_EFFORT_DEFAULT` | `low` | 一般對話開啟思考時的強度（`low` / `high` / `max` / `omit` = 不送，模型預設 `high`） |
 | `REASONING_EFFORT_DEEP` | `high` | `/deep` 的思考強度 |
 | `DEEP_MAX_TOKENS` | `8000` | `/deep` 的 max_tokens（推理 tokens 也算在 completion 內） |
+| `API_TIMEOUT_SECONDS` | `120` | 一般對話單次呼叫 DeepSeek 的逾時秒數（DeepSeek 排隊時會一直保持連線，需要自己計時） |
+| `DEEP_API_TIMEOUT_SECONDS` | `360` | `/deep` 單次呼叫的逾時秒數 |
+| `DEEP_TOTAL_TIMEOUT_SECONDS` | `780` | `/deep` 含重試的總時限，必須小於 900（Discord 互動 15 分鐘後失效，逾時後要來得及回覆錯誤訊息） |
 | `HISTORY_MAX_MESSAGES` | `30` | 每頻道保留的近期訊息數 |
 | `SHOW_CURRENT_TIME` | `true` | 在最後一則訊息前附上現在時間 |
 | `HISTORY_TIMESTAMPS` | `true` | 對話紀錄與摘要的每行使用者訊息加上發言時間（每則約多幾個 token） |

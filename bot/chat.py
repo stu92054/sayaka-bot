@@ -31,6 +31,18 @@ class Reply:
     recorded: bool  # 是否為模型產生（會寫入歷史）
 
 
+RESERVED_AUTHOR_NAMES = ("system", "系統", "系統管理員", "管理員", "admin", "assistant", "bot")
+
+
+def display_author(name: str, config: Config) -> str:
+    """顯示名稱可以自己改：撞名 bot 或像「SYSTEM」「系統管理員」的，在 prompt 裡標成一般成員。"""
+    key = name.strip().casefold()
+    reserved = {n.casefold() for n in (config.bot_display_name, *config.bot_names, *RESERVED_AUTHOR_NAMES)}
+    if key in reserved or key.startswith(("system", "系統")):
+        return f"{name}（成員暱稱）"
+    return name
+
+
 def message_text(message: Any) -> str:
     text = (getattr(message, "clean_content", None) or getattr(message, "content", "") or "").strip()
     attachments = getattr(message, "attachments", None) or []
@@ -68,7 +80,7 @@ class ChatService:
             return None
 
         channel_id = message.channel.id
-        author = message.author.display_name
+        author = display_author(message.author.display_name, self.config)
         content = message_text(message)
         if not content:
             return None
@@ -96,10 +108,10 @@ class ChatService:
 
     async def generate(self, channel_id: int, prompt: list[dict[str, str]], trigger: Trigger,
                        *, model: str, purpose: str = "chat", max_tokens: int | None = None,
-                       thinking: str | None = None) -> Reply:
+                       thinking: str | None = None, total_timeout: float | None = None) -> Reply:
         try:
             text = await self.llm.chat(prompt, model=model, max_tokens=max_tokens or self.config.max_reply_tokens,
-                                       purpose=purpose, thinking=thinking)
+                                       purpose=purpose, thinking=thinking, total_timeout=total_timeout)
         except BudgetExceeded:
             return Reply([self.replies["budget_exceeded"]], trigger, recorded=False)
         except LLMError:
@@ -113,13 +125,16 @@ class ChatService:
         return Reply(split_message(text), trigger, recorded=True)
 
     async def deep(self, channel_id: int, author: str, question: str) -> Reply:
+        author = display_author(author, self.config)
         prompt = self.history.build_prompt(channel_id, self.persona.text, author, question, self._lore_text(),
                                            now=self._now())
         self.history.add(channel_id, author, question)
-        # 思考模式的推理內容也算在 max_tokens 內，所以 /deep 給較大的上限
+        # 思考模式的推理內容也算在 max_tokens 內，所以 /deep 給較大的上限；
+        # 總時限要短於 Discord 互動的 15 分鐘，失敗時才來得及回覆錯誤訊息
         return await self.generate(channel_id, prompt, Trigger.MENTION, model=self.config.model_deep,
                                    purpose="deep", max_tokens=self.config.deep_max_tokens,
-                                   thinking=self.config.thinking_deep)
+                                   thinking=self.config.thinking_deep,
+                                   total_timeout=self.config.deep_total_timeout_seconds)
 
     async def _worth_interjecting(self, prompt: list[dict[str, str]] | None) -> bool:
         if not prompt:
