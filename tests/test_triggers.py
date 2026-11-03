@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from bot.triggers import Cooldown, Trigger, detect_trigger
 
 from .conftest import BOT_ID, OTHER_GUILD_ID, FakeClock, make_config, make_message
@@ -15,6 +17,23 @@ def test_mention_triggers():
 
 def test_mention_of_someone_else_does_not_trigger():
     assert detect(make_message("hi", mentions=[123])) is None
+
+
+def role(bot_id=None):
+    return SimpleNamespace(id=555, tags=SimpleNamespace(bot_id=bot_id) if bot_id is not None else None)
+
+
+def test_mention_of_bots_own_role_triggers():
+    # @ 選單裡選到 Discord 自動建立的同名身分組（<@&id>），而不是 bot 本人
+    msg = make_message("fetch 這個網址")
+    msg.role_mentions = [role(bot_id=BOT_ID)]
+    assert detect(msg) is Trigger.MENTION
+
+
+def test_mention_of_other_roles_does_not_trigger():
+    msg = make_message("大家注意")
+    msg.role_mentions = [role(), role(bot_id=123)]  # 一般身分組、別的 bot 的身分組
+    assert detect(msg) is None
 
 
 def test_reply_to_bot_triggers():

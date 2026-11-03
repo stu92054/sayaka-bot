@@ -27,7 +27,11 @@ def is_reply_to(message: Any, user_id: int) -> bool:
 
 
 def is_mention_of(message: Any, user_id: int) -> bool:
-    return any(getattr(u, "id", None) == user_id for u in (getattr(message, "mentions", None) or []))
+    if any(getattr(u, "id", None) == user_id for u in (getattr(message, "mentions", None) or [])):
+        return True
+    # bot 加入伺服器時 Discord 會建立同名的身分組；@ 選單裡兩者長得一樣，選到身分組也算是 @她
+    return any(getattr(getattr(r, "tags", None), "bot_id", None) == user_id
+               for r in (getattr(message, "role_mentions", None) or []))
 
 
 def contains_name(content: str, names: tuple[str, ...]) -> bool:

@@ -105,28 +105,41 @@ class ToolRunner:
     async def run(self, name: str, arguments: str) -> str:
         tool = next((t for t in self.tools if t.name == name), None)
         if tool is None:
+            log.info("工具呼叫被拒：沒有名為 %s 的工具", name)
             return f"（沒有名為 {name} 的工具）"
         try:
             args = json.loads(arguments or "{}")
             if not isinstance(args, dict):
                 raise ValueError
         except ValueError:
+            log.info("工具 %s 呼叫被拒：參數格式錯誤", name)
             return "（工具參數格式錯誤）"
         if self.calls_made >= self.max_calls:
+            log.info("工具 %s 呼叫被拒：這次回覆已用完 %d 次查詢", name, self.max_calls)
             return "（這次回覆的查詢次數已用完，請根據目前的資料回答）"
         if tool.counts_toward_quota and not self.has_quota():
+            log.info("工具 %s 呼叫被拒：這位成員今天的查詢次數已用完", name)
             return "（這位成員今天的查詢次數已用完，請告訴對方明天再請你查）"
         self.calls_made += 1
         self.used.append(name)
         if tool.counts_toward_quota:
             self.on_use(name)
+        log.info("工具 %s（第 %d/%d 次）：%s", name, self.calls_made, self.max_calls, describe_args(args))
         try:
             return await tool.handler(args, self)
         except WebError as exc:
+            log.warning("工具 %s 查詢失敗：%s", name, exc)
             return f"（查詢失敗：{exc}）"
         except Exception:  # noqa: BLE001 - 工具出錯不能讓整個回覆失敗
             log.exception("工具 %s 執行失敗", name)
             return "（工具執行失敗）"
+
+
+def describe_args(args: dict) -> str:
+    """給 log 用的參數摘要：搜尋關鍵字或網址，最多 100 字。"""
+    value = args.get("query") or args.get("url")
+    text = str(value) if value is not None else json.dumps(args, ensure_ascii=False)
+    return text if len(text) <= 100 else text[:100] + "…"
 
 
 def _attr(value: str) -> str:
@@ -162,15 +175,19 @@ def build_web_tools(web: DeepSeekWeb, *, search_results: int = 5, fetch_max_char
             return "（請提供搜尋關鍵字）"
         results = await web.search(query, count=search_results, ori_question=runner.question)
         runner.allowed_urls |= {_norm_url(r.url) for r in results if r.url}
+        log.info("搜尋「%s」：%d 筆結果", describe_args(args), len(results))
         return format_search(query, results)
 
     async def fetch_page(args: dict, runner: ToolRunner) -> str:
         url = str(args.get("url") or "").strip()
         if not valid_fetch_url(url):
+            log.info("讀取網頁被拒：網址格式不正確（%s）", describe_args(args))
             return "（網址格式不正確，只能讀取 http／https 網址）"
         if not runner.url_allowed(url):
+            log.info("讀取網頁被拒：網址沒有在對話或搜尋結果中出現過（%s）", describe_args(args))
             return "（只能讀取對話中有人貼過的網址，或這次搜尋結果裡的網址）"
         page = await web.fetch(url)
+        log.info("讀取網頁 %s：%d 字", describe_args(args), len(page.content))
         return format_page(url, page, fetch_max_chars)
 
     return [
