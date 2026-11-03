@@ -205,6 +205,29 @@ async def test_fetch_rejects_bad_url_without_calling_api():
     assert api.calls == []
 
 
+async def test_tool_calls_and_refusals_are_logged(caplog):
+    api = FakeWebAPI(search=[(200, SEARCH_OK)], fetch=[(200, {"title": "公告", "content": "內文"})])
+    runner = ToolRunner(web_tools(api), max_calls=3)
+    runner.allow_urls_from("KO: 幫我看 https://example.com/news")
+    with caplog.at_level(logging.INFO, logger="bot.tools"):
+        await runner.run("web_search", json.dumps({"query": "蓮之空 6th Live"}))
+        await runner.run("fetch_page", json.dumps({"url": "https://github.com/x/y"}))
+        await runner.run("fetch_page", json.dumps({"url": "https://example.com/news"}))
+        await runner.run("fetch_page", json.dumps({"url": "https://example.com/news"}))  # 次數用完
+    text = caplog.text
+    assert "工具 web_search（第 1/3 次）：蓮之空 6th Live" in text and "搜尋「蓮之空 6th Live」：2 筆結果" in text
+    assert "讀取網頁被拒：網址沒有在對話或搜尋結果中出現過（https://github.com/x/y）" in text
+    assert "讀取網頁 https://example.com/news：2 字" in text
+    assert "工具 fetch_page 呼叫被拒：這次回覆已用完 3 次查詢" in text
+
+
+async def test_web_error_is_logged(caplog):
+    runner = ToolRunner(web_tools(FakeWebAPI(search=[(500, {"error": "boom"})] * 3)))
+    with caplog.at_level(logging.WARNING, logger="bot.tools"):
+        out = await runner.run("web_search", json.dumps({"query": "x"}))
+    assert out.startswith("（查詢失敗") and "工具 web_search 查詢失敗" in caplog.text
+
+
 async def test_fetch_truncates_long_pages():
     api = FakeWebAPI(fetch=[(200, {"title": "長文", "content": "字" * 100})])
     runner = ToolRunner(web_tools(api, fetch_max_chars=10))
