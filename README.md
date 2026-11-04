@@ -96,6 +96,7 @@ cp .env.example .env
 | `ADMIN_USER_IDS` | — | 可用管理指令的使用者 |
 | `BOT_NAMES` | （空） | 訊息出現這些名字就會觸發（逗號分隔，不分大小寫）；留空 = 不使用名字觸發 |
 | `BOT_DISPLAY_NAME` | `沙耶香` | 對話歷史與摘要中 bot 的名字 |
+| `BOT_ALIASES` | （空） | 她的其他名字（中日文、羅馬拼音），逗號分隔。成員暱稱和這些名字相同時（不分全半形、大小寫、平片假名，去掉空白、符號與「さん」「ちゃん」等稱呼後完整比對），對話紀錄會標成「（成員暱稱）」。只用於辨識冒充，不觸發回覆；`.env.example` 已填好沙耶香的各種寫法 |
 | `MODEL_DEFAULT` | `deepseek-flash` | 一般對話、摘要、插話判斷（舊名 `deepseek-v4-flash` 仍可用） |
 | `MODEL_DEEP` | `deepseek-flash` | `/deep` 使用（可以和 `MODEL_DEFAULT` 相同；`/deep` 一律開思考模式、用 `REASONING_EFFORT_DEEP` 與 `DEEP_*` 的設定）。想要更強可改 `deepseek-v4-pro`，費用約 3～7 倍，而且不能看圖 |
 | `THINKING_DEFAULT` | `disabled` | 一般對話的思考模式：`enabled` / `disabled` / `omit`（不送參數） |

@@ -167,6 +167,8 @@ class Config:
     bot_names: tuple[str, ...] = ()
     # 歷史紀錄與摘要中 bot 的名字
     bot_display_name: str = "沙耶香"
+    # bot 的其他名字（中日文、羅馬拼音等）：成員把暱稱取成這些名字時，prompt 裡會標成「（成員暱稱）」。不影響觸發
+    bot_aliases: tuple[str, ...] = ()
     model_default: str = "deepseek-flash"
     model_deep: str = "deepseek-flash"
     # 兩個模型預設都開啟思考模式；一般聊天關閉以節省 token、降低延遲，/deep 開啟
@@ -247,6 +249,7 @@ class Config:
             admin_user_ids=_int_list(_get(env, "ADMIN_USER_IDS")),
             bot_names=_str_list(_get(env, "BOT_NAMES", "")),
             bot_display_name=_get(env, "BOT_DISPLAY_NAME", "沙耶香"),
+            bot_aliases=_str_list(_get(env, "BOT_ALIASES", "")),
             model_default=_get(env, "MODEL_DEFAULT", "deepseek-flash"),
             model_deep=_get(env, "MODEL_DEEP", "deepseek-flash"),
             thinking_default=_thinking(_get(env, "THINKING_DEFAULT", "disabled"), "THINKING_DEFAULT"),
