@@ -51,7 +51,7 @@ def test_shipped_replies_toml_loads_cleanly():
     assert r["not_allowed"] == "對不起，我在這裡沒辦法回應。"
     assert r["cooldown"] == "請稍等一下，一個一個來。"
     assert r["reset"] == "好的，剛才的對話我已經整理乾淨了。"
-    assert r["deep_description"] == "請沙耶香認真思考後回答一個問題（使用深度模型）"
+    assert r["deep_description"] == "請村野さやか認真思考後回答一個問題（使用深度模型）"
 
 
 def test_shipped_persona_is_sayaka():
@@ -59,6 +59,14 @@ def test_shipped_persona_is_sayaka():
     assert "村野沙耶香" in text
     assert "大小姐" not in text and "本小姐" not in text
     assert "## 對話格式" in text and "## 不要做的事" in text
+
+
+def test_persona_handles_japanese_name_and_collisions():
+    text = (ROOT / "persona.md").read_text(encoding="utf-8")
+    # 改用日文名後，回覆開頭也不能加上日文名字
+    assert "「村野さやか:」" in text and "「さやか:」" in text
+    # 暱稱剛好和她同名的成員：照常稱呼、不戒備
+    assert "不要把「（成員暱稱）」說出來" in text and "不要因此對他特別戒備" in text
 
 
 def test_missing_file_uses_defaults_with_warning(tmp_path, caplog):
@@ -157,7 +165,7 @@ def make_interaction(user_id=1, guild_id=111):
 async def test_command_descriptions_come_from_replies(storage, fake_openai, persona_file):
     bot = make_bot(storage, fake_openai, persona_file, Replies(ROOT / "replies.toml"))
     try:
-        assert bot.tree.get_command("deep").description == "請沙耶香認真思考後回答一個問題（使用深度模型）"
+        assert bot.tree.get_command("deep").description == "請村野さやか認真思考後回答一個問題（使用深度模型）"
         assert bot.tree.get_command("reset").description == "清除本頻道的對話歷史與摘要（管理員）"
     finally:
         await bot.close()
