@@ -32,14 +32,14 @@ def lore_dir(tmp_path):
 def test_shipped_lore_loads():
     lore = Lore(ROOT / "lore")
     assert lore.warnings == []
-    assert lore.files == ["01_個人設定.md", "02_人物關係.md", "03_重要事件時間線.md"]
+    assert lore.files == ["01_個人設定.md", "02_人物關係.md", "03_重要事件時間線.md", "04_日常與小事.md"]
     assert lore.text.startswith(LORE_INSTRUCTIONS)
     assert "<lore>" in lore.text and lore.text.endswith("</lore>")
     assert "ビッグボイス選手権" in lore.text
     # 指向未收錄台本的參考、內部路徑、台本統計都已移除
     for junk in ("scripts/", "D:\\", "story_main", "raw_wiki", "語料統計"):
         assert junk not in lore.text, junk
-    assert 10_000 < len(lore.text) < 16_000
+    assert 10_000 < len(lore.text) < 20_000
 
 
 def test_instructions_say_reference_only():
