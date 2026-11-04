@@ -52,10 +52,29 @@ def stamped_line(author_name: str, content: str, ts: float | None, tz: tzinfo | 
     return f"[{format_stamp(ts, tz)}] {format_line(author_name, content)}"
 
 
-def format_now(now: datetime) -> str:
+# 緊貼在時間後面的提醒：只寫在人設裡壓不住，深夜時她幾乎每則都會報出幾點、已經勸過還一直勸
+NOW_NOTE = "只供參考：被問到才說時間，深夜勸休息時不要說出幾點"
+# 她自己的回覆裡出現這些字，就當作已經勸過休息（連續對話時她會模仿自己前面的回覆，每則都勸）
+_NUDGE = re.compile(r"睡|休息|這個時間|這時間|凌晨|深夜|半夜|這麼晚|很晚了")
+NUDGE_WINDOW_SECONDS = 3600
+
+
+def last_nudge(recent: list[StoredMessage], now: datetime) -> datetime | None:
+    """她最近一小時內最後一次勸休息、提到時間的回覆時間；沒有就 None。"""
+    cutoff = now.timestamp() - NUDGE_WINDOW_SECONDS
+    for m in reversed(recent):
+        if m.created_at is None or m.created_at < cutoff:
+            break
+        if m.is_bot and _NUDGE.search(m.content):
+            return datetime.fromtimestamp(m.created_at, now.tzinfo)
+    return None
+
+
+def format_now(now: datetime, nudged_at: datetime | None = None) -> str:
     label = TIMEZONE_LABELS.get(getattr(now.tzinfo, "key", ""), getattr(now.tzinfo, "key", None) or "")
     suffix = f"，{label}" if label else ""
-    return f"（現在時間：{now:%Y-%m-%d}（週{WEEKDAYS[now.weekday()]}）{now:%H:%M}{suffix}）"
+    nudged = f"。你在 {nudged_at:%H:%M} 已經勸過休息，這次不要再提睡覺或時間，除非對方自己提起" if nudged_at else ""
+    return f"（現在時間：{now:%Y-%m-%d}（週{WEEKDAYS[now.weekday()]}）{now:%H:%M}{suffix}。{NOW_NOTE}{nudged}）"
 
 
 def strip_leading_stamp(text: str) -> str:
@@ -87,7 +106,7 @@ def build_prompt(
 
     原作資料與 persona 都放在最前面且內容不變，讓 DeepSeek 的前綴快取能命中。
     摘要放在 user 角色並標明只是參考資料（避免成員把指令藏進對話、經摘要變成系統指示）。
-    now：附上現在時間（放在最後一則訊息，每分鐘都會變，所以不能放在前面）。
+    now：附上現在時間（放在最後一則訊息，每分鐘都會變，所以不能放在前面）。她一小時內已經勸過休息時，一併提醒不要再勸。
     timestamps：使用者的每行訊息加上發言時間（需要 now 提供時區）。bot 自己的回覆不加，以免模型學著在回覆加時間。
     """
     tz = now.tzinfo if (now is not None and timestamps) else None
@@ -104,7 +123,7 @@ def build_prompt(
             messages.append({"role": "user", "content": stamped_line(m.author_name, m.content, m.created_at, tz)})
     current = stamped_line(current_author, current_content, now.timestamp() if tz else None, tz)
     if now is not None:
-        current = f"{format_now(now)}\n{current}"
+        current = f"{format_now(now, last_nudge(recent, now))}\n{current}"
     messages.append({"role": "user", "content": current})
     return merge_consecutive(messages)
 
