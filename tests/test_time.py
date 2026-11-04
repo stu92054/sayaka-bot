@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from bot.config import Config
-from bot.history import build_prompt, format_now, format_stamp, strip_leading_stamp
+from bot.history import build_prompt, format_now, format_stamp, last_nudge, strip_leading_stamp
 from bot.llm import LLMClient
 from bot.main import PersonaBot
 from bot.persona import Persona
@@ -82,6 +82,31 @@ def test_history_without_created_at_has_no_stamp():
     old = [StoredMessage(1, CH, "KO", "舊訊息", False)]
     msgs = build_prompt("PERSONA", None, old, "KO", "hi", now=NOW, timestamps=True)
     assert msgs[1]["content"].startswith("KO: 舊訊息\n")
+
+
+LATE = datetime(2026, 11, 4, 2, 30, tzinfo=TAIPEI)
+
+
+def test_reminds_not_to_nudge_again_within_an_hour():
+    recent = [
+        StoredMessage(1, CH, "KO", "剛加班回來", False, ts(2026, 11, 4, 2, 20)),
+        StoredMessage(2, CH, "沙耶香", "辛苦了。吃點熱的就早點休息吧。", True, ts(2026, 11, 4, 2, 21)),
+        StoredMessage(3, CH, "KO", "吃了泡麵", False, ts(2026, 11, 4, 2, 25)),
+        StoredMessage(4, CH, "沙耶香", "泡麵也好，下次加顆蛋吧。", True, ts(2026, 11, 4, 2, 26)),
+    ]
+    assert last_nudge(recent, LATE) == datetime(2026, 11, 4, 2, 21, tzinfo=TAIPEI)
+    last = build_prompt("PERSONA", None, recent, "KO", "近江町市場有什麼推薦？", now=LATE, timestamps=True)[-1]["content"]
+    assert "。你在 02:21 已經勸過休息，這次不要再提睡覺或時間，除非對方自己提起）" in last
+
+
+def test_no_nudge_reminder_when_old_or_absent():
+    old = [StoredMessage(1, CH, "沙耶香", "早點休息喔。", True, ts(2026, 11, 4, 1, 29))]  # 超過一小時
+    plain = [StoredMessage(1, CH, "沙耶香", "近江町市場的海鮮丼很推薦。", True, ts(2026, 11, 4, 2, 21))]
+    member = [StoredMessage(1, CH, "KO", "我要去睡了", False, ts(2026, 11, 4, 2, 21))]  # 成員自己說的不算
+    no_time = [StoredMessage(1, CH, "沙耶香", "早點休息喔。", True)]
+    for recent in (old, plain, member, no_time, []):
+        assert last_nudge(recent, LATE) is None
+        assert "已經勸過" not in build_prompt("P", None, recent, "KO", "hi", now=LATE)[-1]["content"]
 
 
 def test_time_does_not_break_prefix_cache():
