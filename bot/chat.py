@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import random
 import time
+import unicodedata
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -43,13 +44,39 @@ class Reply:
 
 
 RESERVED_AUTHOR_NAMES = ("system", "系統", "系統管理員", "管理員", "admin", "assistant", "bot")
+# 比對 bot 名字時去掉的結尾稱呼（已正規化：片假名轉平假名、小寫）
+NAME_HONORIFICS = ("さん", "ちゃん", "さま", "様", "せんぱい", "先輩", "醬", "san", "chan", "sama")
+
+
+def normalize_name(name: str) -> str:
+    """比對暱稱用的正規化：全形轉半形、不分大小寫、片假名轉平假名、去掉空白與符號、去掉結尾的稱呼。
+
+    「サヤカ」「村野 沙耶香」「さやかさん」「SAYAKA-chan」會分別變成「さやか」「村野沙耶香」「さやか」「sayaka」。
+    """
+    s = unicodedata.normalize("NFKC", name).casefold()
+    s = "".join(chr(ord(c) - 0x60) if "ァ" <= c <= "ヶ" else c for c in s)
+    s = "".join(c for c in s if unicodedata.category(c)[0] in "LN")
+    stripped = True
+    while stripped:
+        stripped = False
+        for h in NAME_HONORIFICS:
+            if s.endswith(h) and len(s) > len(h):
+                s = s[: -len(h)]
+                stripped = True
+    return s
 
 
 def display_author(name: str, config: Config) -> str:
-    """顯示名稱可以自己改：撞名 bot 或像「SYSTEM」「系統管理員」的，在 prompt 裡標成一般成員。"""
+    """顯示名稱可以自己改：撞名 bot 或像「SYSTEM」「系統管理員」的，在 prompt 裡標成一般成員。
+
+    bot 的名字（BOT_DISPLAY_NAME、BOT_ALIASES、BOT_NAMES）用正規化後完整比對，
+    中日文、片假名、羅馬拼音、加上「さん」等寫法都算撞名；「沙耶香推」這種只是包含名字的暱稱不算。
+    """
     key = name.strip().casefold()
-    reserved = {n.casefold() for n in (config.bot_display_name, *config.bot_names, *RESERVED_AUTHOR_NAMES)}
-    if key in reserved or key.startswith(("system", "系統")):
+    reserved = {n.casefold() for n in RESERVED_AUTHOR_NAMES}
+    bot_names = {normalize_name(n) for n in (config.bot_display_name, *config.bot_aliases, *config.bot_names)}
+    bot_names.discard("")
+    if key in reserved or key.startswith(("system", "系統")) or normalize_name(name) in bot_names:
         return f"{name}（成員暱稱）"
     return name
 
