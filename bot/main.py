@@ -17,6 +17,7 @@ from .llm import LLMClient
 from .lore import Lore
 from .persona import Persona
 from .replies import Replies
+from .memories import Memories
 from .tools import Tool, build_web_tools
 from .web import DeepSeekWeb
 from .storage import Storage
@@ -63,7 +64,8 @@ def setup_logging(config: Config) -> None:
 
 class PersonaBot(discord.Client):
     def __init__(self, config: Config, storage: Storage, llm: LLMClient, persona: Persona,
-                 replies: Replies | None = None, lore: Lore | None = None, web_tools: list[Tool] | None = None):
+                 replies: Replies | None = None, lore: Lore | None = None, web_tools: list[Tool] | None = None,
+                 memories: Memories | None = None):
         intents = discord.Intents.default()
         intents.message_content = True  # 需要在 Developer Portal 開啟 Message Content Intent
         # 完全不允許提及（@everyone、@here、角色、使用者、被回覆者），避免模型照著使用者要求輸出 <@id> 去 ping 人。
@@ -76,9 +78,11 @@ class PersonaBot(discord.Client):
         self.persona = persona
         self.replies = replies or Replies()
         self.lore = lore
+        self.memories = memories
         self.history = HistoryManager(storage, llm, config.history_max_messages, config.history_timestamps)
         self.chat = ChatService(config, llm, self.history, persona, Cooldown(config.user_cooldown_seconds),
-                                replies=self.replies, lore=lore, web_tools=web_tools)
+                                replies=self.replies, lore=lore, web_tools=web_tools,
+                                memories=memories)
         self.tree = app_commands.CommandTree(self)
         self._member_cache: dict[int, bool] = {}
         self._bg_tasks: set[asyncio.Task] = set()
@@ -190,6 +194,9 @@ def main() -> int:
     persona = Persona(config.persona_path)
     replies = Replies(config.replies_path)  # 缺檔或缺項只記 warning，不會中止
     lore = Lore(config.lore_dir) if config.lore_dir is not None else None
+    memories = Memories(config.memories_dir, results=config.recall_results) if config.memories_dir is not None else None
+    if memories is not None and memories.enabled:
+        log.info("已啟用回憶工具 recall（%d 張卡）", len(memories.cards))
     storage = Storage(config.db_path)
     calendar = HolidayCalendar(
         cache_dir=config.db_path.parent / "holidays",
@@ -205,7 +212,7 @@ def main() -> int:
         web_tools = build_web_tools(web, search_results=config.web_search_results,
                                     fetch_max_chars=config.web_fetch_max_chars)
         log.info("已啟用查資料工具：%s", "、".join(t.name for t in web_tools))
-    bot = PersonaBot(config, storage, llm, persona, replies, lore, web_tools)
+    bot = PersonaBot(config, storage, llm, persona, replies, lore, web_tools, memories)
     try:
         bot.run(config.discord_token, log_handler=None)
     finally:

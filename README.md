@@ -118,6 +118,8 @@ cp .env.example .env
 | `PRICE_CURRENCY` | `USD` | 計價幣別，依 DeepSeek 帳戶設定：`USD`（英文版價目表）或 `CNY`（中文版價目表） |
 | `DAILY_TOKEN_BUDGET` | `0` | 每日 token 上限（輸入＋輸出，含命中快取的部分），選填；`0` = 不限制 |
 | `LORE_DIR` | `lore` | 原作資料資料夾；`none` = 不使用 |
+| `MEMORIES_DIR` | `memories` | 回憶卡資料夾（`recall` 工具檢索用），見「回憶卡」；`none` = 不使用 |
+| `RECALL_RESULTS` | `3` | `recall` 每次回傳幾張卡（1～10） |
 | `USER_COOLDOWN_SECONDS` | `5` | 同一使用者觸發的冷卻秒數 |
 | `MAX_REPLY_TOKENS` | `600` | 每次回覆的最大 tokens |
 | `RANDOM_INTERJECT_RATE` | `0` | 一般訊息進入插話判斷的機率（0～1）；`0` = 不插話 |
@@ -213,7 +215,7 @@ docker run -d --name sayaka-bot --restart unless-stopped \
   -v "$(pwd)/data:/app/data" \
   -v "$(pwd)/persona.md:/app/persona.md:ro" \
   -v "$(pwd)/replies.toml:/app/replies.toml:ro" \
-  -v "$(pwd)/lore:/app/lore:ro" \
+  -v "$(pwd)/lore:/app/lore:ro"   -v "$(pwd)/memories:/app/memories:ro" \
   sayaka-bot
 ```
 
@@ -260,6 +262,23 @@ journalctl -u sayaka-bot -f
 - 修改後用 `/persona_reload` 生效。資料一改，前綴快取要重新累積，短時間內費用會稍高。
 - 資料來源：角色資料包的 wiki（個人設定、人物關係、重要事件時間線），已移除指向未收錄台本的參考、
   內部路徑與台本語料統計。原作台本本身沒有放進 repo。
+
+### 回憶卡（memories/）與 recall 工具
+
+原作資料是整份常駐在 prompt 裡，篇幅有限，只放穩定的設定；某次直播發生了什麼這類細節，
+放在 `memories/` 的回憶卡，被問到時她再用 `recall` 工具去查。
+
+- 每張卡以 `## 標題` 開頭，到下一個 `## ` 為止；`關鍵詞：` 那行只用來檢索，不會給模型看。
+  `memories/aliases.txt` 是別名表（每行一組同義詞），查詢含其中一個詞時，整組都會加進查詢。
+- 檢索用 BM25：中日文切成相鄰兩字（漢字另加單字），不需要額外套件或外部服務，也不用花錢。
+  查詢裡的虛詞不算分，別名展開加進來的詞權重減半。
+- 有卡片時就會啟用，和 `WEB_TOOLS_ENABLED` 無關；不算每人每日查詢額度，但和查資料工具共用
+  `WEB_MAX_TOOL_CALLS_PER_REPLY` 的每次回覆上限。插話、`/deep` 不用。
+- 啟用時人設之後會多一段固定的使用說明，請她在被問到過去的具體細節時先查、閒聊不要查，
+  查到後用自己的口吻講、查不到就說記不清楚。
+- 模型偶爾會把呼叫寫成文字（例如 `[recall: 關鍵字]`），這種回覆會被改成實際呼叫，不會送到頻道裡。
+- 修改後用 `/persona_reload` 生效。
+- 目前收錄 With×MEETS 直播的回憶卡（每支有她出場的直播一張），由直播錄音整理成摘要；直播逐字稿本身沒有放進 repo。
 
 ### replies.toml
 
@@ -359,12 +378,14 @@ bot/
   tools.py      # 工具框架（function calling）與查資料工具
   web.py        # DeepSeek Search／Fetch API 客戶端
   lore.py       # lore/ 原作資料載入
+  memories.py   # memories/ 回憶卡檢索與 recall 工具
   holidays.py   # 中國節假日／調休資料（判斷高峰時段）
   text.py       # 2000 字元分段
 docs/testing.md # 上線前測試清單與部署步驟
 persona.md
 replies.toml
 lore/          # 原作資料（整份放進 prompt）
+memories/      # 回憶卡（recall 工具檢索）
 tests/
 deploy/bot.service
 Dockerfile

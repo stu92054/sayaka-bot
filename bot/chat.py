@@ -15,6 +15,7 @@ from .config import Config
 from .history import HistoryManager, strip_leading_stamp
 from .llm import BudgetExceeded, ContentFiltered, LLMClient, LLMError
 from .lore import Lore
+from .memories import RECALL_GUIDE, Memories, build_recall_tool
 from .persona import Persona
 from .replies import Replies
 from .text import split_message
@@ -107,6 +108,7 @@ class ChatService:
         lore: Lore | None = None,
         clock: Callable[[], float] = time.monotonic,
         web_tools: list[Tool] | None = None,
+        memories: Memories | None = None,
     ):
         self.config = config
         self.llm = llm
@@ -118,6 +120,7 @@ class ChatService:
         self.lore = lore
         self.clock = clock
         self.web_tools = list(web_tools or [])
+        self.memories = memories
         # 插話控制（記憶體內，重啟後歸零）：各頻道她上次發言的時間、最近一小時的插話時間
         self._last_spoke: dict[int, float] = {}
         self._interjections: dict[int, deque[float]] = defaultdict(deque)
@@ -266,7 +269,7 @@ class ChatService:
         try:
             p = await self.llm.yes_probability(judge, model=self.config.model_default, purpose="interject_judge",
                                                total_timeout=INTERJECT_JUDGE_TIMEOUT,
-                                               tools=[t.spec() for t in self.web_tools] if self.tools_enabled else None)
+                                               tools=[t.spec() for t in self.tools] if self.tools_enabled else None)
         except (BudgetExceeded, LLMError, ContentFiltered):
             return False
         threshold = self.config.interject_threshold
@@ -275,17 +278,34 @@ class ChatService:
         return p >= threshold
 
     @property
+    def recall_enabled(self) -> bool:
+        return self.memories is not None and self.memories.enabled
+
+    @property
+    def tools(self) -> list[Tool]:
+        """這次可用的工具：回憶（有回憶卡時）＋查資料（WEB_TOOLS_ENABLED 時）。順序固定，不影響快取。"""
+        tools = [build_recall_tool(self.memories)] if self.recall_enabled else []
+        if self.config.web_tools_enabled:
+            tools += self.web_tools
+        return tools
+
+    @property
     def tools_enabled(self) -> bool:
-        return self.config.web_tools_enabled and bool(self.web_tools)
+        return bool(self.tools)
 
     def _with_tool_guide(self, prompt: list[dict[str, str]]) -> list[dict[str, str]]:
         """啟用工具時，在開頭的 system 訊息（原作資料、人設）之後加上工具說明。內容固定，不影響快取。"""
-        if not self.tools_enabled:
+        guides = []
+        if self.recall_enabled:
+            guides.append(RECALL_GUIDE)
+        if self.config.web_tools_enabled and self.web_tools:
+            guides.append(WEB_TOOLS_GUIDE)
+        if not guides:
             return prompt
         i = 0
         while i < len(prompt) and prompt[i]["role"] == "system":
             i += 1
-        return prompt[:i] + [{"role": "system", "content": WEB_TOOLS_GUIDE}] + prompt[i:]
+        return prompt[:i] + [{"role": "system", "content": "\n\n".join(guides)}] + prompt[i:]
 
     def _tool_runner(self, user_id: int, question: str, prompt: list[dict[str, str]],
                      *, max_calls: int | None = None) -> ToolRunner:
@@ -293,7 +313,7 @@ class ChatService:
         limit = self.config.web_daily_limit_per_user
         storage = self.history.storage
         runner = ToolRunner(
-            tools=self.web_tools,
+            tools=self.tools,
             max_calls=self.config.web_max_tool_calls_per_reply if max_calls is None else max_calls,
             question=question,
             has_quota=lambda: limit <= 0 or storage.tool_uses_on(day, user_id) < limit,
