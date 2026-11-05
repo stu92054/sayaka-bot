@@ -7,12 +7,12 @@ import pytest
 
 from bot.commands import reload_persona_and_replies
 from bot.config import Config
-from bot.llm import LLMClient
 from bot.main import PersonaBot
 from bot.memories import (KEYWORDS_PREFIX, RECALL_GUIDE, RECALL_RESULT_NOTE, Memories, build_recall_tool,
                           parse_cards, tokenize)
 from bot.persona import Persona
-from bot.tools import WEB_TOOLS_GUIDE, ToolRunner, build_web_tools
+from bot.llm import FINAL_ANSWER_NOTE, LLMClient
+from bot.tools import WEB_TOOLS_GUIDE, ToolRunner, build_web_tools, looks_like_tool_markup
 
 from .conftest import BOT_ID, TAIPEI, make_config, make_message
 from .test_tools import FakeWebAPI, make_web
@@ -56,6 +56,13 @@ def test_tokenize_cjk_bigrams_and_numbers():
     assert {"綴", "理", "綴理", "先輩"} <= set(tokens)
     assert {"2024", "1", "13", "asmr"} <= set(tokens)  # 數字去掉前導 0、英文轉小寫
     assert "さや" in tokens and "さ" not in tokens  # 假名只取相鄰兩字
+
+
+def test_tokenize_ordinals_and_fullwidth():
+    tokens = tokenize("ラジオ 第３回 2023-06-03")
+    assert "第3回" in tokens and "3" in tokens  # 全形轉半形；日期裡的 03 仍是 3
+    assert tokens.count("3") == 1  # 序數裡的 3 不另外算成數字
+    assert {t for t in tokenize("第一回 第十二話 第 16 回") if t.startswith("第") and len(t) > 2} == {"第1回", "第12話", "第16回"}
 
 
 def test_parse_cards_skips_header_and_hides_keywords():
@@ -177,8 +184,14 @@ async def test_persona_reload_reloads_memories(storage, fake_openai, persona_fil
 def test_shipped_memories_load():
     m = Memories(ROOT / "memories")
     assert m.warnings == [] and len(m.cards) >= 100 and m.aliases
-    assert all(c.title[:4].isdigit() for c in m.cards)
+    assert m.files == ["songs.md", "with_meets.md"]
+    streams = [c for c in m.cards if c.title[:4].isdigit()]
+    songs = [c for c in m.cards if c.title.startswith("歌曲『")]
+    assert len(streams) >= 100 and len(songs) >= 200
+    assert all(c.title.startswith(("歌單：", "歌曲『")) or c in streams for c in m.cards)
     assert m.search("さやママ")[0].title.startswith("2024-10-10")
+    assert m.search("Bless you!")[0].title == "歌曲『Bless you!』"
+    assert any(c.title == "歌單：DOLLCHESTRA 103 期" for c in m.search("DOLLCHESTRA 103 期 歌單"))
 
 
 # --- 模型把呼叫寫成文字時，改為實際呼叫 ---
@@ -195,6 +208,17 @@ def test_parse_text_call_ignores_normal_replies(mem_dir, text):
     assert runner.parse_text_call(text) is None
 
 
+DSML = ('<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name="recall">\n'
+        '<｜｜DSML｜｜ parameter name="query" string="true">ASMR 起床</｜｜DSML｜｜ parameter>\n'
+        '</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>')
+
+
+def test_parse_dsml_markup(mem_dir):
+    runner = ToolRunner([build_recall_tool(Memories(mem_dir))])
+    assert looks_like_tool_markup(DSML) and not looks_like_tool_markup("那次啊……")
+    assert runner.parse_text_call(DSML) == ("recall", '{"query": "ASMR 起床"}')
+
+
 async def test_text_call_is_executed(make_service, fake_openai, mem_dir):
     svc = make_service()
     svc.memories = Memories(mem_dir)
@@ -206,9 +230,21 @@ async def test_text_call_is_executed(make_service, fake_openai, mem_dir):
     assert "第一次挑戰 ASMR" in second[-1]["content"]
 
 
-async def test_text_call_on_final_round_is_not_sent(make_service, fake_openai, mem_dir):
+@pytest.mark.parametrize("leak", ["[recall: 更多]", DSML])
+async def test_tool_call_on_final_round_asks_again(make_service, fake_openai, mem_dir, leak):
+    """最後一輪不能再查，模型卻還想呼叫：提醒一次直接回答，不把呼叫文字送出去。"""
     svc = make_service(web_max_tool_calls_per_reply=1)
     svc.memories = Memories(mem_dir)
-    fake_openai.completions.replies = [{"tool_calls": [("recall", {"query": "ASMR"})]}, "[recall: 更多]"]
+    fake_openai.completions.replies = [{"tool_calls": [("recall", {"query": "ASMR"})]}, leak, "那次是叫大家起床喔。"]
     reply = await svc.handle_message(make_message("ASMR 那次？", mentions=[BOT_ID]), BOT_ID)
-    assert "[recall" not in "".join(reply.chunks)
+    assert reply.chunks == ["那次是叫大家起床喔。"]
+    retry = fake_openai.completions.calls[-1]
+    assert retry["tool_choice"] == "none" and retry["messages"][-1]["content"] == FINAL_ANSWER_NOTE
+
+
+async def test_tool_call_twice_on_final_round_is_not_sent(make_service, fake_openai, mem_dir):
+    svc = make_service(web_max_tool_calls_per_reply=1)
+    svc.memories = Memories(mem_dir)
+    fake_openai.completions.replies = [{"tool_calls": [("recall", {"query": "ASMR"})]}, DSML, DSML]
+    reply = await svc.handle_message(make_message("ASMR 那次？", mentions=[BOT_ID]), BOT_ID)
+    assert "DSML" not in "".join(reply.chunks) and not reply.recorded

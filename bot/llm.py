@@ -16,11 +16,14 @@ from openai import AsyncOpenAI
 from .config import Config
 from .replies import DEFAULT_REPLIES
 from .storage import Storage, UsageRow
+from .tools import looks_like_tool_markup
 
 if TYPE_CHECKING:
     from .tools import ToolRunner
 
 log = logging.getLogger(__name__)
+
+FINAL_ANSWER_NOTE = "（這次回覆已經不能再查了。請直接根據上面已經查到的內容回答，不要再呼叫工具。）"
 
 # 固定訊息改由 replies.toml 提供（見 bot/replies.py）；這裡只是中性預設值的別名
 BUDGET_EXCEEDED_REPLY = DEFAULT_REPLIES["budget_exceeded"]
@@ -231,9 +234,15 @@ class LLMClient:
             calls = getattr(message, "tool_calls", None) or []
             content = (getattr(message, "content", None) or "").strip()
             text_call = None if calls else tools.parse_text_call(content)
+            if final_round and (text_call is not None or looks_like_tool_markup(content)):
+                # 不能再查了，模型卻還想呼叫工具：提醒一次直接回答；還是一樣就不回（不要把呼叫文字送出去）
+                log.info("最後一輪仍想呼叫工具，要求直接回答：%s", content[:100])
+                msgs.append({"role": "system", "content": FINAL_ANSWER_NOTE})
+                choice = await self._complete(msgs, model=model, max_tokens=max_tokens, purpose=purpose,
+                                              thinking="disabled", tools=specs, tool_choice="none")
+                content = (getattr(choice.message, "content", None) or "").strip()
+                return "" if tools.parse_text_call(content) or looks_like_tool_markup(content) else content
             if text_call is not None:
-                if final_round:
-                    return ""  # 不要把「[recall: …]」這種文字當成回答送出去
                 log.info("模型把工具呼叫寫成文字，改為實際呼叫：%s", content[:100])
                 calls = [SimpleNamespace(id=f"text_call_{round_no}",
                                          function=SimpleNamespace(name=text_call[0], arguments=text_call[1]))]

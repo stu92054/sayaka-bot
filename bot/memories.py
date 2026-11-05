@@ -5,8 +5,8 @@
 - 卡片格式：每張以「## 」開頭的標題起始，到下一個「## 」為止；「關鍵詞：」那行只用來檢索，不會回傳給模型。
 - 別名表（memories/aliases.txt）：每行一組同義詞，用空白分隔；查詢含其中一個詞時，整組都加進查詢。
 - 中日文沒有空白斷詞，所以切成相鄰兩字，漢字另外加單字（假名單字太常見，不加）；
-  英數字以整個詞為單位，數字去掉前導 0（01 和 1 視為相同）。
-- 查詢裡的虛詞（妳、的、那次……）不算分；別名展開加進來的詞權重減半，避免蓋過原本的關鍵字。
+  英數字以整個詞為單位，數字去掉前導 0（01 和 1 視為相同）；全形英數先轉成半形。
+- 「第 3 回」「第三話」這類序數整個當一個詞，不和日期裡的數字混在一起。標題的詞算兩次。查詢裡的虛詞（妳、的、那次……）不算分；別名展開加進來的詞權重減半，避免蓋過原本的關鍵字。
 說明文字只寫用法，不帶角色名稱；角色相關內容全在 memories/ 的檔案裡。
 """
 from __future__ import annotations
@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import math
 import re
+import unicodedata
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,18 +25,23 @@ log = logging.getLogger(__name__)
 
 ALIASES_FILE = "aliases.txt"
 KEYWORDS_PREFIX = "關鍵詞："
-_CJK = r"぀-ヿ㐀-䶿一-鿿豈-﫿"
+_CJK = r"\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff"
 _TOKEN_RE = re.compile(f"[{_CJK}]+|[0-9]+|[a-z]+")
-_KANA = re.compile(r"[぀-ヿ]")
-K1, B = 1.5, 0.75
+_KANA = re.compile(r"[\u3040-\u30ff]")
+_ORDINAL_RE = re.compile(r"\u7b2c\s*([0-9]+|[\u4e00\u4e8c\u4e09\u56db\u4e94\u516d\u4e03\u516b\u4e5d\u5341]+)\s*([\u56de\u8a71\u671f])")
+_KANJI_DIGITS = {ch: i for i, ch in enumerate("\u4e00\u4e8c\u4e09\u56db\u4e94\u516d\u4e03\u516b\u4e5d", 1)}
+K1, B = 1.5, 0.5
 ALIAS_WEIGHT = 0.5
 # 問句常見的虛詞：只在查詢端略過（卡片內容照常索引）
 STOP_TOKENS = frozenset("妳你我他她的了是在那這次時候什麼怎樣誰有嗎呢吧和跟個一些要去哪裡說過會做還就都也")
 
 RECALL_GUIDE = (
-    "你可以用 recall 工具查自己過去的回憶紀錄（直播、節目、活動裡發生過的事）：\n"
+    "你可以用 recall 工具查自己過去的回憶紀錄（直播、節目、活動裡發生過的事），以及歌曲資料"
+    "（誰唱的、哪個小組有哪些歌、收在哪張 CD、是哪一話或哪場 Live 的歌）：\n"
     "- 有人問到你過去某次直播、節目、企劃、梗，或你和成員之間某件具體的事時，先用 recall 查，不要憑印象編。"
     "原作資料只寫到大概、對方問的是細節（說了什麼、講了哪些內容、哪個詞、出了什麼題）時，也要查。\n"
+    "- 問到歌（誰唱的、有哪些歌、新歌叫什麼、收在哪裡）時也先查，不要憑印象說出歌名或成員。"
+    "查到歌單後，要列曲目可以挑重點，不必全部念完。\n"
     "- 要查就直接呼叫工具，不要在回覆裡寫出「[recall: …]」這類文字。\n"
     "- 查詢用具體的詞，例如成員名、企劃或單元名、歌名、梗、食物、時期（「高二 生日」「電台 最終回」這種）。\n"
     "- 查到的是你自己的經歷：用自己的話、自己的口吻自然地說，挑和問題有關的講，不要整張念出來，"
@@ -46,9 +52,31 @@ RECALL_GUIDE = (
 RECALL_RESULT_NOTE = "（以下是你自己的回憶紀錄，只挑和問題有關的部分，用自己的口吻回答。）"
 
 
+def _kanji_number(s: str) -> int | None:
+    """一～九十九的漢字數字（「第一回」「第十二話」）。"""
+    if not s or any(ch not in _KANJI_DIGITS and ch != "十" for ch in s):
+        return None
+    if "十" not in s:
+        return _KANJI_DIGITS[s] if len(s) == 1 else None
+    tens, _, ones = s.partition("十")
+    return (_KANJI_DIGITS.get(tens, 0) if tens else 1) * 10 + (_KANJI_DIGITS.get(ones, 0) if ones else 0)
+
+
+def _ordinals(text: str) -> list[str]:
+    """「第 3 回」「第三話」這類序數整個當一個詞，避免和日期裡的數字混在一起。"""
+    tokens = []
+    for num, unit in _ORDINAL_RE.findall(text):
+        n = int(num) if num.isdigit() else _kanji_number(num)
+        if n is not None:
+            tokens.append(f"第{n}{unit}")
+    return tokens
+
+
 def tokenize(text: str) -> list[str]:
-    tokens: list[str] = []
-    for run in _TOKEN_RE.findall(text.lower()):
+    text = unicodedata.normalize("NFKC", text)
+    tokens: list[str] = _ordinals(text)
+    # 序數的部分不再拆成單獨的數字（「第3回」的 3 不該對到日期裡的 3）
+    for run in _TOKEN_RE.findall(_ORDINAL_RE.sub(" ", text).lower()):
         if run.isdigit():
             tokens.append(run.lstrip("0") or "0")
         elif run.isascii():
@@ -80,7 +108,8 @@ def parse_cards(content: str) -> list[Card]:
         body = [ln for ln in lines[1:] if not ln.startswith(KEYWORDS_PREFIX)]
         keywords = [ln[len(KEYWORDS_PREFIX):] for ln in lines[1:] if ln.startswith(KEYWORDS_PREFIX)]
         card = Card(title, "\n".join(body).strip())
-        card.tokens = Counter(tokenize("\n".join([title, *body, *keywords])))
+        # 標題的詞算兩次：直播標題、歌名、歌單名這類短標題最能代表整張卡
+        card.tokens = Counter(tokenize("\n".join([title, title, *body, *keywords])))
         cards.append(card)
     return cards
 
@@ -207,7 +236,7 @@ def build_recall_tool(memories: Memories) -> Tool:
 
     return Tool(
         name="recall",
-        description="查你自己過去的回憶紀錄（直播、節目、活動裡發生的事），回傳最相關的幾則。",
+        description="查你自己過去的回憶紀錄（直播、節目、活動裡發生的事）與歌曲資料，回傳最相關的幾則。",
         parameters={
             "type": "object",
             "properties": {"query": {"type": "string", "description": "要回想的關鍵字，用空白分隔幾個具體的詞"}},
