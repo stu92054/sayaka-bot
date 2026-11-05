@@ -6,6 +6,7 @@ import logging
 import math
 import time
 from datetime import datetime
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from zoneinfo import ZoneInfo
 
@@ -229,6 +230,14 @@ class LLMClient:
             message = choice.message
             calls = getattr(message, "tool_calls", None) or []
             content = (getattr(message, "content", None) or "").strip()
+            text_call = None if calls else tools.parse_text_call(content)
+            if text_call is not None:
+                if final_round:
+                    return ""  # 不要把「[recall: …]」這種文字當成回答送出去
+                log.info("模型把工具呼叫寫成文字，改為實際呼叫：%s", content[:100])
+                calls = [SimpleNamespace(id=f"text_call_{round_no}",
+                                         function=SimpleNamespace(name=text_call[0], arguments=text_call[1]))]
+                content = ""
             if not calls or final_round:
                 return content
             msgs.append({

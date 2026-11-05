@@ -222,6 +222,9 @@ class Config:
     replies_path: Path = Path("replies.toml")
     # 原作資料資料夾；None = 不使用
     lore_dir: Path | None = Path("lore")
+    # 回憶卡資料夾（recall 工具檢索用，不整份放進 prompt）；None = 不使用
+    memories_dir: Path | None = Path("memories")
+    recall_results: int = 3
     db_path: Path = Path("data/bot.sqlite3")
     timezone: str = "Asia/Taipei"
     log_level: str = "INFO"
@@ -287,6 +290,8 @@ class Config:
             persona_path=Path(_get(env, "PERSONA_PATH", "persona.md")),
             replies_path=Path(_get(env, "REPLIES_PATH", "replies.toml")),
             lore_dir=_lore_dir(_get(env, "LORE_DIR", "lore")),
+            memories_dir=_lore_dir(_get(env, "MEMORIES_DIR", "memories")),
+            recall_results=int(_get(env, "RECALL_RESULTS", "3")),
             db_path=Path(_get(env, "DB_PATH", "data/bot.sqlite3")),
             timezone=_get(env, "BOT_TIMEZONE", "Asia/Taipei"),
             log_level=_get(env, "LOG_LEVEL", "INFO").upper(),
@@ -319,6 +324,8 @@ class Config:
             problems.append("API_TIMEOUT_SECONDS、DEEP_API_TIMEOUT_SECONDS、DEEP_TOTAL_TIMEOUT_SECONDS 必須大於 0")
         if not 1 <= self.web_search_results <= 50:
             problems.append("WEB_SEARCH_RESULTS 必須介於 1 和 50")
+        if not 1 <= self.recall_results <= 10:
+            problems.append("RECALL_RESULTS 必須介於 1 和 10")
         if self.web_max_tool_calls_per_reply < 1:
             problems.append("WEB_MAX_TOOL_CALLS_PER_REPLY 至少要 1")
         if self.deep_total_timeout_seconds >= 900:

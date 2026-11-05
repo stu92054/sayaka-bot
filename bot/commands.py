@@ -68,6 +68,12 @@ def reload_persona_and_replies(bot: "PersonaBot") -> str:
         if lore.enabled:
             lines.append(f"已重新載入原作資料（{len(lore.files)} 個檔案，{len(lore.text)} 字）。")
         lines.extend(f"- {w}" for w in lore_warnings[:5])
+    memories = getattr(bot, "memories", None)
+    if memories is not None and memories.directory is not None:
+        memory_warnings = memories.reload()
+        if memories.enabled:
+            lines.append(f"已重新載入回憶卡（{len(memories.cards)} 張）。")
+        lines.extend(f"- {w}" for w in memory_warnings[:5])
     warnings = bot.replies.reload()
     if warnings:
         lines.append("固定訊息已重新載入，但有以下警告：")

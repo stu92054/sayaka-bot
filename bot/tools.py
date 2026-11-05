@@ -28,6 +28,12 @@ Handler = Callable[[dict, "ToolRunner"], Awaitable[str]]
 _URL_STOP = "\\s<>\"'`，。、；：！？（）「」『』【】《》〈〉"
 URL_RE = re.compile(f"https?://[^{_URL_STOP}]+")
 _TRAILING = ".,;:!?)。，、；：！？"
+# 模型偶爾不走 tool_calls，而是把呼叫寫成文字：「[recall: 關鍵字]」「[recall query="關鍵字"]」「recall(關鍵字)」
+_TEXT_CALL_RE = re.compile(
+    r"""^\s*(?:\[\s*(?P<a>[a-z_]+)(?:\s*[:：]\s*|\s+query\s*=\s*)(?P<qa>.+?)\s*\]"""
+    r"""|(?P<b>[a-z_]+)\s*[(（]\s*(?P<qb>.+?)\s*[)）])\s*$""",
+    re.S,
+)
 
 WEB_TOOLS_GUIDE = (
     "你可以使用查資料的工具：\n"
@@ -97,6 +103,18 @@ class ToolRunner:
 
     def specs(self) -> list[dict]:
         return [t.spec() for t in self.tools]
+
+    def parse_text_call(self, content: str) -> tuple[str, str] | None:
+        """整則回覆只是一個寫成文字的工具呼叫時，回傳 (工具名稱, JSON 參數)；只認得有 query 參數的工具。"""
+        m = _TEXT_CALL_RE.match(content or "")
+        if not m:
+            return None
+        name = m.group("a") or m.group("b")
+        tool = next((t for t in self.tools if t.name == name), None)
+        if tool is None or "query" not in tool.parameters.get("properties", {}):
+            return None
+        query = (m.group("qa") or m.group("qb")).strip().strip("\"'「」")
+        return name, json.dumps({"query": query}, ensure_ascii=False)
 
     def allow_urls_from(self, text: str) -> None:
         self.allowed_urls |= extract_urls(text)
