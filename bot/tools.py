@@ -34,6 +34,13 @@ _TEXT_CALL_RE = re.compile(
     r"""|(?P<b>[a-z_]+)\s*[(（]\s*(?P<qb>.+?)\s*[)）])\s*$""",
     re.S,
 )
+# DeepSeek 偶爾把內部的工具呼叫標記當成文字輸出：<｜DSML｜invoke name="recall"> … <｜DSML｜parameter name="query">…
+_MARKUP_RE = re.compile(r"<\s*/?\s*[｜|]+\s*DSML|<\s*/?\s*(?:tool_call|function_call)\b", re.I)
+_MARKUP_CALL_RE = re.compile(r'invoke name="(?P<name>[a-z_]+)".*?parameter name="query"[^>]*>(?P<q>[^<]+)<', re.S)
+
+
+def looks_like_tool_markup(content: str) -> bool:
+    return bool(_MARKUP_RE.search(content or ""))
 
 WEB_TOOLS_GUIDE = (
     "你可以使用查資料的工具：\n"
@@ -106,14 +113,18 @@ class ToolRunner:
 
     def parse_text_call(self, content: str) -> tuple[str, str] | None:
         """整則回覆只是一個寫成文字的工具呼叫時，回傳 (工具名稱, JSON 參數)；只認得有 query 參數的工具。"""
-        m = _TEXT_CALL_RE.match(content or "")
-        if not m:
+        content = content or ""
+        m = _TEXT_CALL_RE.match(content)
+        if m:
+            name, query = m.group("a") or m.group("b"), m.group("qa") or m.group("qb")
+        elif looks_like_tool_markup(content) and (m := _MARKUP_CALL_RE.search(content)):
+            name, query = m.group("name"), m.group("q")
+        else:
             return None
-        name = m.group("a") or m.group("b")
         tool = next((t for t in self.tools if t.name == name), None)
         if tool is None or "query" not in tool.parameters.get("properties", {}):
             return None
-        query = (m.group("qa") or m.group("qb")).strip().strip("\"'「」")
+        query = query.strip().strip("\"'「」")
         return name, json.dumps({"query": query}, ensure_ascii=False)
 
     def allow_urls_from(self, text: str) -> None:
