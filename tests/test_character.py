@@ -43,6 +43,18 @@ def test_bundled_kosuzu_loads():
         assert junk not in lore.text, junk
 
 
+def test_bundled_kosuzu_song_cards():
+    from bot.memories import Memories
+
+    m = Memories(ROOT / "characters/kosuzu/memories")
+    assert m.warnings == [] and len(m.cards) > 200
+    text = "\n".join(c.text for c in m.cards)
+    # 歌曲卡是以小鈴的角度產生的，不能殘留沙耶香版的標記
+    assert "小鈴有唱" in text and "沙耶香有唱" not in text and "沙耶香沒有唱" not in text
+    assert m.search("小鈴 唱過 哪些歌")[0].title == "歌單：小鈴唱過的歌（總覽）"
+    assert m.search("レディバグ")[0].title == "歌曲『レディバグ』"
+
+
 def test_character_dir_moves_every_default(tmp_path):
     d = tmp_path / "kosuzu"
     d.mkdir()
