@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import random
+import re
 import time
 import unicodedata
 from collections import defaultdict, deque
@@ -80,6 +81,16 @@ def display_author(name: str, config: Config) -> str:
     if key in reserved or key.startswith(("system", "系統")) or normalize_name(name) in bot_names:
         return f"{name}（成員暱稱）"
     return name
+
+
+def strip_self_name(text: str, config: Config) -> str:
+    """模型偶爾會在回覆開頭寫上自己的名字（「小鈴: 早安」），把這個前綴拿掉；只處理開頭。"""
+    names = sorted({n for n in (config.bot_display_name, *config.bot_aliases) if n}, key=len, reverse=True)
+    if not names:
+        return text
+    pattern = r"^\s*(?:" + "|".join(re.escape(n) for n in names) + r")\s*[:：]\s*"
+    stripped = re.sub(pattern, "", text, count=1, flags=re.IGNORECASE)
+    return stripped if stripped.strip() else text
 
 
 def describe_attachments(attachments: list[Any]) -> str:
@@ -202,7 +213,7 @@ class ChatService:
             return Reply([self.replies["error"]], trigger, recorded=False)
         except ContentFiltered:
             return Reply([self.replies["content_filter"]], trigger, recorded=False)
-        text = strip_leading_stamp(text)
+        text = strip_self_name(strip_leading_stamp(text), self.config)
         if tool_runner is not None and tool_runner.used:
             text = suppress_embeds(text)
         if not text:

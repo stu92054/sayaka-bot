@@ -261,6 +261,14 @@ characters/<角色>/
   沒設時沿用舊的 `data/bot.sqlite3`，既有的部署不用搬資料。
 - `BOT_DISPLAY_NAME`、`BOT_ALIASES`、`PERSONA_PATH`、`LORE_DIR` 等環境變數有設定時，以環境變數為準。
 - 歌曲卡（`memories/songs.md`）會標出「她有沒有唱」，所以每個角色各有一份。
+- 模型偶爾會在回覆開頭寫上自己的名字（「小鈴: …」），送出前會把 `display_name` 與 `aliases` 開頭的這個前綴拿掉。
+
+目前收錄的角色：
+
+| 資料夾 | 角色 | 內容 |
+|---|---|---|
+| `characters/sayaka` | 村野沙耶香（畢業後，升上大學） | persona、lore 01–05、回憶卡（With×MEETS、歌曲） |
+| `characters/kosuzu` | 徒町小鈴（103 期畢業後、106 期入學前，即將升三年級） | persona、lore 01–04；還沒有回憶卡（沒有 `memories/` 時 recall 工具自動關閉） |
 
 ## 5. 修改人設與固定訊息
 

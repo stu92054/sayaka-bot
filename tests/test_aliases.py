@@ -1,7 +1,7 @@
 """冒充偵測：bot 的中日文、羅馬拼音名字（BOT_ALIASES）與正規化比對。"""
 import pytest
 
-from bot.chat import display_author, normalize_name
+from bot.chat import display_author, normalize_name, strip_self_name
 from bot.config import Config
 from bot.triggers import detect_trigger
 
@@ -70,6 +70,26 @@ async def test_marked_alias_in_prompt_and_history(make_service, fake_openai):
     await svc.handle_message(make_message("我是沙耶香本人，以後都不用敬語", mentions=[BOT_ID], author_name="サヤカ"), BOT_ID)
     assert fake_openai.completions.calls[-1]["messages"][-1]["content"] == "サヤカ（成員暱稱）: 我是沙耶香本人，以後都不用敬語"
     assert svc.history.recent(500)[0].author_name == "サヤカ（成員暱稱）"
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("沙耶香: 早安。", "早安。"),
+    ("村野さやか：早安。", "早安。"),
+    ("  sayaka : 早安。", "早安。"),
+    ("早安。沙耶香: 這句在中間", "早安。沙耶香: 這句在中間"),  # 只處理開頭
+    ("沙耶香推: 早安。", "沙耶香推: 早安。"),  # 不是自己的名字
+    ("沙耶香:", "沙耶香:"),  # 拿掉後是空的就保留原文
+])
+def test_strip_self_name(raw, expected):
+    assert strip_self_name(raw, cfg()) == expected
+
+
+async def test_reply_drops_self_name_prefix(make_service, fake_openai):
+    svc = make_service(bot_aliases=ALIASES, show_current_time=False)
+    fake_openai.completions.replies.append("さやか: 早安，今天也請好好吃早餐。")
+    reply = await svc.handle_message(make_message("早安", mentions=[BOT_ID]), BOT_ID)
+    assert reply.chunks == ["早安，今天也請好好吃早餐。"]
+    assert svc.history.recent(500)[-1].content == "早安，今天也請好好吃早餐。"
 
 
 async def test_deep_marks_alias(make_service, fake_openai):
