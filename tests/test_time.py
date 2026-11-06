@@ -206,7 +206,7 @@ def test_llm_now_uses_bot_timezone(storage, fake_openai):
 
 
 def test_persona_explains_time():
-    text = (ROOT / "persona.md").read_text(encoding="utf-8")
+    text = (ROOT / "characters/sayaka/persona.md").read_text(encoding="utf-8")
     assert "（現在時間：…）" in text and "[11/03 21:30]" in text
     assert "不要主動報時" in text
     assert "引號或時間" in text

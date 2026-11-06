@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import tomllib
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
@@ -115,6 +116,26 @@ def _holiday_sources(value: str) -> tuple[str, ...]:
     return _str_list(value)
 
 
+DEFAULT_CHARACTER_DIR = Path("characters/sayaka")
+CHARACTER_FILE = "character.toml"
+
+
+def _character(directory: Path) -> dict:
+    """角色資料夾裡的 character.toml（名字、別名）；沒有這個檔就回傳空的設定。"""
+    path = directory / CHARACTER_FILE
+    if not path.is_file():
+        return {}
+    try:
+        with path.open("rb") as f:
+            data = tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise ValueError(f"{path} 讀取失敗：{exc}") from exc
+    aliases = data.get("aliases", [])
+    if not isinstance(data.get("display_name", ""), str) or not isinstance(aliases, list):
+        raise ValueError(f"{path}：display_name 必須是字串、aliases 必須是字串陣列")
+    return data
+
+
 def _lore_dir(value: str) -> Path | None:
     if value.strip().lower() in ("none", "off", "disabled"):
         return None
@@ -218,12 +239,14 @@ class Config:
     web_fetch_max_chars: int = 4000
     web_timeout_seconds: float = 20.0
     deepseek_base_url: str = "https://api.deepseek.com"
-    persona_path: Path = Path("persona.md")
-    replies_path: Path = Path("replies.toml")
+    # 角色資料夾：persona、replies、lore、memories 與 character.toml（名字、別名）的預設位置
+    character_dir: Path = DEFAULT_CHARACTER_DIR
+    persona_path: Path = DEFAULT_CHARACTER_DIR / "persona.md"
+    replies_path: Path = DEFAULT_CHARACTER_DIR / "replies.toml"
     # 原作資料資料夾；None = 不使用
-    lore_dir: Path | None = Path("lore")
+    lore_dir: Path | None = DEFAULT_CHARACTER_DIR / "lore"
     # 回憶卡資料夾（recall 工具檢索用，不整份放進 prompt）；None = 不使用
-    memories_dir: Path | None = Path("memories")
+    memories_dir: Path | None = DEFAULT_CHARACTER_DIR / "memories"
     recall_results: int = 3
     db_path: Path = Path("data/bot.sqlite3")
     timezone: str = "Asia/Taipei"
@@ -245,14 +268,19 @@ class Config:
             if load_dotenv_file:
                 load_dotenv()
             env = dict(os.environ)
+        character_env = _get(env, "CHARACTER_DIR")
+        character_dir = Path(character_env) if character_env else DEFAULT_CHARACTER_DIR
+        character = _character(character_dir)
+        # 沒指定 CHARACTER_DIR 時沿用舊的資料庫檔名；同一個資料夾跑多個角色時，各自用自己的檔案
+        default_db = f"data/{character_dir.name}.sqlite3" if character_env else "data/bot.sqlite3"
         return cls(
             discord_token=_get(env, "DISCORD_TOKEN"),
             deepseek_api_key=_get(env, "DEEPSEEK_API_KEY"),
             allowed_guild_ids=_int_list(_get(env, "ALLOWED_GUILD_IDS")),
             admin_user_ids=_int_list(_get(env, "ADMIN_USER_IDS")),
             bot_names=_str_list(_get(env, "BOT_NAMES", "")),
-            bot_display_name=_get(env, "BOT_DISPLAY_NAME", "沙耶香"),
-            bot_aliases=_str_list(_get(env, "BOT_ALIASES", "")),
+            bot_display_name=_get(env, "BOT_DISPLAY_NAME", character.get("display_name") or character_dir.name),
+            bot_aliases=_str_list(_get(env, "BOT_ALIASES", ",".join(map(str, character.get("aliases", []))))),
             model_default=_get(env, "MODEL_DEFAULT", "deepseek-flash"),
             model_deep=_get(env, "MODEL_DEEP", "deepseek-flash"),
             thinking_default=_thinking(_get(env, "THINKING_DEFAULT", "disabled"), "THINKING_DEFAULT"),
@@ -287,12 +315,13 @@ class Config:
             web_fetch_max_chars=int(_get(env, "WEB_FETCH_MAX_CHARS", "4000")),
             web_timeout_seconds=float(_get(env, "WEB_TIMEOUT_SECONDS", "20")),
             deepseek_base_url=_get(env, "DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-            persona_path=Path(_get(env, "PERSONA_PATH", "persona.md")),
-            replies_path=Path(_get(env, "REPLIES_PATH", "replies.toml")),
-            lore_dir=_lore_dir(_get(env, "LORE_DIR", "lore")),
-            memories_dir=_lore_dir(_get(env, "MEMORIES_DIR", "memories")),
+            character_dir=character_dir,
+            persona_path=Path(_get(env, "PERSONA_PATH", str(character_dir / "persona.md"))),
+            replies_path=Path(_get(env, "REPLIES_PATH", str(character_dir / "replies.toml"))),
+            lore_dir=_lore_dir(_get(env, "LORE_DIR", str(character_dir / "lore"))),
+            memories_dir=_lore_dir(_get(env, "MEMORIES_DIR", str(character_dir / "memories"))),
             recall_results=int(_get(env, "RECALL_RESULTS", "3")),
-            db_path=Path(_get(env, "DB_PATH", "data/bot.sqlite3")),
+            db_path=Path(_get(env, "DB_PATH", default_db)),
             timezone=_get(env, "BOT_TIMEZONE", "Asia/Taipei"),
             log_level=_get(env, "LOG_LEVEL", "INFO").upper(),
             price_currency=_currency(_get(env, "PRICE_CURRENCY", "USD")),

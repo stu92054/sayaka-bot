@@ -1,6 +1,4 @@
 """冒充偵測：bot 的中日文、羅馬拼音名字（BOT_ALIASES）與正規化比對。"""
-from pathlib import Path
-
 import pytest
 
 from bot.chat import display_author, normalize_name
@@ -9,7 +7,6 @@ from bot.triggers import detect_trigger
 
 from .conftest import BOT_ID, make_config, make_message
 
-ROOT = Path(__file__).resolve().parent.parent
 ALIASES = ("沙耶香", "さやか", "村野沙耶香", "村野さやか", "Sayaka", "Murano Sayaka", "Sayaka Murano")
 
 
@@ -81,14 +78,12 @@ async def test_deep_marks_alias(make_service, fake_openai):
     assert fake_openai.completions.calls[-1]["messages"][-1]["content"].startswith("村野さやか（成員暱稱）: ")
 
 
-def test_config_parses_aliases():
+def test_config_parses_aliases(tmp_path):
     c = Config.from_env({"BOT_ALIASES": "沙耶香, さやか ,Sayaka"})
     assert c.bot_aliases == ("沙耶香", "さやか", "Sayaka")
-    assert Config.from_env({}).bot_aliases == ()
+    assert Config.from_env({"CHARACTER_DIR": str(tmp_path)}).bot_aliases == ()
 
 
-def test_env_example_lists_aliases():
-    env = (ROOT / ".env.example").read_text(encoding="utf-8")
-    line = next(l for l in env.splitlines() if l.startswith("BOT_ALIASES="))
-    for alias in ("沙耶香", "さやか", "村野沙耶香", "村野さやか", "Sayaka"):
-        assert alias in line
+def test_character_file_lists_aliases():
+    # 預設角色的別名寫在 characters/sayaka/character.toml
+    assert Config.from_env({}).bot_aliases == ALIASES

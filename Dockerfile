@@ -9,9 +9,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY bot ./bot
-COPY persona.md replies.toml ./
-COPY lore ./lore
-COPY memories ./memories
+COPY characters ./characters
 
 RUN useradd --create-home --uid 1000 botuser && mkdir -p /app/data && chown botuser /app/data
 USER botuser

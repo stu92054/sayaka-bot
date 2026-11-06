@@ -30,7 +30,7 @@ def lore_dir(tmp_path):
 # --- 載入 ---
 
 def test_shipped_lore_loads():
-    lore = Lore(ROOT / "lore")
+    lore = Lore(ROOT / "characters/sayaka/lore")
     assert lore.warnings == []
     assert lore.files == ["01_個人設定.md", "02_人物關係.md", "03_重要事件時間線.md", "04_日常與小事.md",
                           "05_With×MEETS.md"]
@@ -89,7 +89,7 @@ def test_reload_picks_up_changes_and_keeps_old_on_failure(lore_dir):
 
 
 def test_lore_dir_config():
-    assert Config.from_env({}).lore_dir == Path("lore")
+    assert Config.from_env({}).lore_dir == Path("characters/sayaka/lore")
     assert Config.from_env({"LORE_DIR": "none"}).lore_dir is None
     assert Config.from_env({"LORE_DIR": "/data/lore"}).lore_dir == Path("/data/lore")
 
@@ -152,7 +152,7 @@ async def test_summary_does_not_get_lore(make_service, fake_openai, lore_dir):
 async def test_persona_reload_reloads_lore(storage, fake_openai, persona_file, lore_dir):
     config = make_config()
     llm = LLMClient(config, storage, client=fake_openai, now=lambda: datetime(2026, 11, 3, 12, 30, tzinfo=TAIPEI))
-    bot = PersonaBot(config, storage, llm, Persona(persona_file), Replies(ROOT / "replies.toml"), Lore(lore_dir))
+    bot = PersonaBot(config, storage, llm, Persona(persona_file), Replies(ROOT / "characters/sayaka/replies.toml"), Lore(lore_dir))
     try:
         (lore_dir / "03_c.md").write_text("新資料", encoding="utf-8")
         msg = reload_persona_and_replies(bot)
