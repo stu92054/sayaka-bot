@@ -42,7 +42,7 @@ def test_no_character_lines_left_in_code():
 
 
 def test_shipped_replies_toml_loads_cleanly():
-    r = Replies(ROOT / "replies.toml")
+    r = Replies(ROOT / "characters/sayaka/replies.toml")
     assert r.warnings == []
     assert r["budget_exceeded"] == "今天已經說了很多話了……我們明天再繼續吧。"
     assert r["error"] == "對不起，我這邊好像出了點問題。請稍等一下再跟我說話。"
@@ -55,14 +55,14 @@ def test_shipped_replies_toml_loads_cleanly():
 
 
 def test_shipped_persona_is_sayaka():
-    text = (ROOT / "persona.md").read_text(encoding="utf-8")
+    text = (ROOT / "characters/sayaka/persona.md").read_text(encoding="utf-8")
     assert "村野沙耶香" in text
     assert "大小姐" not in text and "本小姐" not in text
     assert "## 對話格式" in text and "## 不要做的事" in text
 
 
 def test_persona_handles_japanese_name_and_collisions():
-    text = (ROOT / "persona.md").read_text(encoding="utf-8")
+    text = (ROOT / "characters/sayaka/persona.md").read_text(encoding="utf-8")
     # 改用日文名後，回覆開頭也不能加上日文名字
     assert "「村野さやか:」" in text and "「さやか:」" in text
     # 暱稱剛好和她同名的成員：照常稱呼、不戒備
@@ -163,7 +163,7 @@ def make_interaction(user_id=1, guild_id=111):
 
 
 async def test_command_descriptions_come_from_replies(storage, fake_openai, persona_file):
-    bot = make_bot(storage, fake_openai, persona_file, Replies(ROOT / "replies.toml"))
+    bot = make_bot(storage, fake_openai, persona_file, Replies(ROOT / "characters/sayaka/replies.toml"))
     try:
         assert bot.tree.get_command("deep").description == "請村野さやか認真思考後回答一個問題（使用深度模型）"
         assert bot.tree.get_command("reset").description == "清除本頻道的對話歷史與摘要（管理員）"
@@ -172,7 +172,7 @@ async def test_command_descriptions_come_from_replies(storage, fake_openai, pers
 
 
 async def test_command_replies_come_from_replies(storage, fake_openai, persona_file):
-    bot = make_bot(storage, fake_openai, persona_file, Replies(ROOT / "replies.toml"))
+    bot = make_bot(storage, fake_openai, persona_file, Replies(ROOT / "characters/sayaka/replies.toml"))
     try:
         # 非管理員用 /reset
         it = make_interaction(user_id=1)
@@ -215,7 +215,7 @@ async def test_persona_reload_reloads_both(storage, fake_openai, persona_file, t
 
 
 async def test_persona_reload_failure_keeps_old_persona(storage, fake_openai, persona_file, tmp_path):
-    bot = make_bot(storage, fake_openai, persona_file, Replies(ROOT / "replies.toml"))
+    bot = make_bot(storage, fake_openai, persona_file, Replies(ROOT / "characters/sayaka/replies.toml"))
     try:
         persona_file.write_text("", encoding="utf-8")
         msg = reload_persona_and_replies(bot)

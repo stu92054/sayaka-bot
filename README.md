@@ -3,11 +3,15 @@
 在台灣蓮之空粉絲的 Discord 群組裡，扮演『Love Live! 蓮之空女學院學園偶像俱樂部』的村野沙耶香聊天。
 使用 DeepSeek API（`openai` SDK），對話歷史、摘要與用量存在 SQLite。
 
-角色相關的內容全部放在兩個檔案，程式只負責載入，換角色時不用改程式：
+角色相關的內容全部放在角色資料夾（預設 [`characters/sayaka/`](characters/sayaka/)），程式只負責載入，換角色時不用改程式：
 
-- [`persona.md`](persona.md)：人設（system prompt）
-- [`replies.toml`](replies.toml)：固定訊息（額度用完、錯誤、權限不足、冷卻中…）與 slash command 說明
-- [`lore/`](lore/)：原作資料（個人設定、人物關係、事件時間線、日常小事、With×MEETS 直播），讓她回答原作相關問題時有所依據
+- `persona.md`：人設（system prompt）
+- `replies.toml`：固定訊息（額度用完、錯誤、權限不足、冷卻中…）與 slash command 說明
+- `lore/`：原作資料（個人設定、人物關係、事件時間線、日常小事、With×MEETS 直播），讓她回答原作相關問題時有所依據
+- `memories/`：回憶卡（With×MEETS 直播、歌曲），被問到細節時用 `recall` 工具查
+- `character.toml`：名字（`display_name`）與別名（`aliases`）
+
+要跑其他角色，見「多個角色」。下文提到 `persona.md`、`lore/` 等檔案時，都是指角色資料夾裡的檔案。
 
 ## 功能概要
 
@@ -95,8 +99,9 @@ cp .env.example .env
 | `ALLOWED_GUILD_IDS` | — | 逗號分隔，只在這些伺服器運作 |
 | `ADMIN_USER_IDS` | — | 可用管理指令的使用者 |
 | `BOT_NAMES` | （空） | 訊息出現這些名字就會觸發（逗號分隔，不分大小寫）；留空 = 不使用名字觸發 |
-| `BOT_DISPLAY_NAME` | `沙耶香` | 對話歷史與摘要中 bot 的名字 |
-| `BOT_ALIASES` | （空） | 她的其他名字（中日文、羅馬拼音），逗號分隔。成員暱稱和這些名字相同時（不分全半形、大小寫、平片假名，去掉空白、符號與「さん」「ちゃん」等稱呼後完整比對），對話紀錄會標成「（成員暱稱）」。只用於辨識冒充，不觸發回覆；`.env.example` 已填好沙耶香的各種寫法 |
+| `CHARACTER_DIR` | `characters/sayaka` | 角色資料夾，下面的人設、固定訊息、原作資料、回憶卡、名字都從這裡讀，見「多個角色」 |
+| `BOT_DISPLAY_NAME` | `character.toml` 的 `display_name` | 對話歷史與摘要中 bot 的名字 |
+| `BOT_ALIASES` | `character.toml` 的 `aliases` | 她的其他名字（中日文、羅馬拼音），逗號分隔。成員暱稱和這些名字相同時（不分全半形、大小寫、平片假名，去掉空白、符號與「さん」「ちゃん」等稱呼後完整比對），對話紀錄會標成「（成員暱稱）」。只用於辨識冒充，不觸發回覆；`characters/sayaka/character.toml` 已填好沙耶香的各種寫法 |
 | `MODEL_DEFAULT` | `deepseek-flash` | 一般對話、摘要、插話判斷（舊名 `deepseek-v4-flash` 仍可用） |
 | `MODEL_DEEP` | `deepseek-flash` | `/deep` 使用（可以和 `MODEL_DEFAULT` 相同；`/deep` 一律開思考模式、用 `REASONING_EFFORT_DEEP` 與 `DEEP_*` 的設定）。想要更強可改 `deepseek-v4-pro`，費用約 3～7 倍，而且不能看圖 |
 | `THINKING_DEFAULT` | `disabled` | 一般對話的思考模式：`enabled` / `disabled` / `omit`（不送參數） |
@@ -117,8 +122,8 @@ cp .env.example .env
 | `DAILY_COST_BUDGET` | `1` | 每日費用上限（幣別同 `PRICE_CURRENCY`，依記錄的費用加總）；`0` = 不限制 |
 | `PRICE_CURRENCY` | `USD` | 計價幣別，依 DeepSeek 帳戶設定：`USD`（英文版價目表）或 `CNY`（中文版價目表） |
 | `DAILY_TOKEN_BUDGET` | `0` | 每日 token 上限（輸入＋輸出，含命中快取的部分），選填；`0` = 不限制 |
-| `LORE_DIR` | `lore` | 原作資料資料夾；`none` = 不使用 |
-| `MEMORIES_DIR` | `memories` | 回憶卡資料夾（`recall` 工具檢索用），見「回憶卡」；`none` = 不使用 |
+| `LORE_DIR` | 角色資料夾的 `lore` | 原作資料資料夾；`none` = 不使用 |
+| `MEMORIES_DIR` | 角色資料夾的 `memories` | 回憶卡資料夾（`recall` 工具檢索用），見「回憶卡」；`none` = 不使用 |
 | `RECALL_RESULTS` | `3` | `recall` 每次回傳幾張卡（1～10） |
 | `USER_COOLDOWN_SECONDS` | `5` | 同一使用者觸發的冷卻秒數 |
 | `MAX_REPLY_TOKENS` | `600` | 每次回覆的最大 tokens |
@@ -134,9 +139,9 @@ cp .env.example .env
 | `WEB_SEARCH_RESULTS` | `5` | 每次搜尋取幾筆結果（1～50） |
 | `WEB_FETCH_MAX_CHARS` | `4000` | 讀取網頁時最多給模型看幾個字 |
 | `WEB_TIMEOUT_SECONDS` | `20` | Search／Fetch 單次請求的逾時秒數 |
-| `PERSONA_PATH` | `persona.md` | 人設檔路徑 |
-| `REPLIES_PATH` | `replies.toml` | 固定訊息與指令說明的檔案路徑 |
-| `DB_PATH` | `data/bot.sqlite3` | SQLite 檔路徑 |
+| `PERSONA_PATH` | 角色資料夾的 `persona.md` | 人設檔路徑 |
+| `REPLIES_PATH` | 角色資料夾的 `replies.toml` | 固定訊息與指令說明的檔案路徑 |
+| `DB_PATH` | `data/bot.sqlite3`；有設 `CHARACTER_DIR` 時是 `data/<資料夾名>.sqlite3` | SQLite 檔路徑 |
 | `BOT_TIMEZONE` | `Asia/Taipei` | 計算「今日」用量，以及告訴她現在時間、發言時間所用的時區 |
 | `LOG_LEVEL` | `INFO` | log 等級 |
 | `PRICE_TABLE` | 內建 | 覆寫高峰時段價格，格式 `model:命中:未命中:輸出;...`（每百萬 tokens，幣別同 `PRICE_CURRENCY`） |
@@ -213,13 +218,11 @@ docker build -t sayaka-bot .
 docker run -d --name sayaka-bot --restart unless-stopped \
   --env-file .env \
   -v "$(pwd)/data:/app/data" \
-  -v "$(pwd)/persona.md:/app/persona.md:ro" \
-  -v "$(pwd)/replies.toml:/app/replies.toml:ro" \
-  -v "$(pwd)/lore:/app/lore:ro"   -v "$(pwd)/memories:/app/memories:ro" \
+  -v "$(pwd)/characters:/app/characters:ro" \
   sayaka-bot
 ```
 
-把 `persona.md` 與 `replies.toml` 掛載進容器，修改後就能直接 `/persona_reload`，不必重建映像。
+把 `characters/` 掛載進容器，修改人設或資料後就能直接 `/persona_reload`，不必重建映像。
 （`data/` 目錄需要容器內 uid 1000 可寫入：`mkdir -p data && sudo chown 1000 data`。）
 
 ### systemd 常駐
@@ -237,6 +240,27 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now sayaka-bot
 journalctl -u sayaka-bot -f
 ```
+
+### 多個角色
+
+每個角色一個資料夾，放在 `characters/` 底下，結構和 `characters/sayaka/` 相同：
+
+```
+characters/<角色>/
+  character.toml   # display_name、aliases
+  persona.md
+  replies.toml
+  lore/
+  memories/
+```
+
+每個角色是一個獨立的 Discord bot：各自要有自己的 Discord 應用程式（`DISCORD_TOKEN`）和自己的 `.env`，
+用 `CHARACTER_DIR` 指定角色資料夾，其他設定可以相同。程式碼共用，只是各跑一個行程（或容器）。
+
+- 有設 `CHARACTER_DIR` 時，資料庫預設是 `data/<資料夾名>.sqlite3`，同一個專案資料夾跑多個角色也不會共用對話紀錄與用量。
+  沒設時沿用舊的 `data/bot.sqlite3`，既有的部署不用搬資料。
+- `BOT_DISPLAY_NAME`、`BOT_ALIASES`、`PERSONA_PATH`、`LORE_DIR` 等環境變數有設定時，以環境變數為準。
+- 歌曲卡（`memories/songs.md`）會標出「她有沒有唱」，所以每個角色各有一份。
 
 ## 5. 修改人設與固定訊息
 
@@ -390,10 +414,13 @@ bot/
   holidays.py   # 中國節假日／調休資料（判斷高峰時段）
   text.py       # 2000 字元分段
 docs/testing.md # 上線前測試清單與部署步驟
-persona.md
-replies.toml
-lore/          # 原作資料（整份放進 prompt）
-memories/      # 回憶卡（recall 工具檢索）
+characters/
+  sayaka/
+    character.toml  # 名字與別名
+    persona.md
+    replies.toml
+    lore/           # 原作資料（整份放進 prompt）
+    memories/       # 回憶卡（recall 工具檢索）
 tests/
 deploy/bot.service
 Dockerfile

@@ -2,7 +2,7 @@
 
 建議先用**測試用的 bot** 在**測試用的 Discord 伺服器**裡把下面的項目跑過一遍，確認沒問題再讓正式的 bot 進粉絲群組。
 
-測試可以直接在常駐的雲端主機上進行，不一定要先在本機跑。不過測試期間常常要改 `persona.md`、`replies.toml`、`lore/`，在本機改完執行 `/persona_reload` 會比較快。兩種方式的步驟相同。
+測試可以直接在常駐的雲端主機上進行，不一定要先在本機跑。不過測試期間常常要改角色資料夾（`characters/sayaka/`）裡的 `persona.md`、`replies.toml`、`lore/`，在本機改完執行 `/persona_reload` 會比較快。兩種方式的步驟相同。
 
 ---
 

@@ -164,7 +164,7 @@ async def test_no_cards_means_no_tools(make_service, fake_openai, tmp_path):
 
 def test_config_memories():
     cfg = Config.from_env({})
-    assert cfg.memories_dir == Path("memories") and cfg.recall_results == 3
+    assert cfg.memories_dir == Path("characters/sayaka/memories") and cfg.recall_results == 3
     assert Config.from_env({"MEMORIES_DIR": "none"}).memories_dir is None
     assert any("RECALL_RESULTS" in p for p in Config.from_env({"RECALL_RESULTS": "0"}).validate())
 
@@ -182,7 +182,7 @@ async def test_persona_reload_reloads_memories(storage, fake_openai, persona_fil
 
 
 def test_shipped_memories_load():
-    m = Memories(ROOT / "memories")
+    m = Memories(ROOT / "characters/sayaka/memories")
     assert m.warnings == [] and len(m.cards) >= 100 and m.aliases
     assert m.files == ["songs.md", "with_meets.md"]
     streams = [c for c in m.cards if c.title[:4].isdigit()]
