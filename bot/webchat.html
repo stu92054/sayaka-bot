@@ -41,6 +41,7 @@
 <header>
   <h1>蓮之空 bot 測試</h1>
   <select id="char">{{OPTIONS}}</select>
+  <select id="model" title="模型">{{MODELS}}</select>
   <button class="ghost" id="reset" type="button">新對話</button>
 </header>
 <div id="setup">
@@ -62,6 +63,9 @@ const newSession = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.
 let session = newSession();
 $("name").value = store.get("hasu.name");
 $("pass").value = store.get("hasu.pass");
+const savedModel = store.get("hasu.model");
+if (savedModel && [...$("model").options].some(o => o.value === savedModel)) $("model").value = savedModel;
+if ($("model").options.length < 2) $("model").style.display = "none";
 const saved = store.get("hasu.char");
 if (saved && [...$("char").options].some(o => o.value === saved)) $("char").value = saved;
 
@@ -78,6 +82,7 @@ function note(text) { const d = document.createElement("div"); d.className = "no
 function reset(msg) { session = newSession(); $("log").innerHTML = ""; note(msg); }
 
 $("char").onchange = () => { store.set("hasu.char", $("char").value); reset("換成 " + $("char").selectedOptions[0].text + "，開始新對話。"); };
+$("model").onchange = () => { store.set("hasu.model", $("model").value); reset("換成 " + $("model").selectedOptions[0].text + "，開始新對話。"); };
 $("reset").onclick = () => reset("開始新對話。");
 
 $("f").onsubmit = async e => {
@@ -90,14 +95,15 @@ $("f").onsubmit = async e => {
   store.set("hasu.name", name); store.set("hasu.pass", pass);
   add("me", name, text);
   $("text").value = ""; $("send").disabled = true;
-  const wait = add("her", $("char").selectedOptions[0].text, "……");
+  const who = () => $("char").selectedOptions[0].text + ($("model").options.length > 1 ? "（" + $("model").selectedOptions[0].text + "）" : "");
+  const wait = add("her", who(), "……");
   try {
     const r = await fetch("api/chat", { method: "POST", headers: { "Content-Type": "application/json", "X-Pass": pass },
-      body: JSON.stringify({ character: $("char").value, session, name, text }) });
+      body: JSON.stringify({ character: $("char").value, model: $("model").value, session, name, text }) });
     const data = await r.json();
     wait.remove();
     if (!r.ok) { note(data.error || "出錯了"); return; }
-    for (const m of data.messages) add("her", data.name, m);
+    for (const m of data.messages) add("her", who(), m);
   } catch (err) {
     wait.remove(); note("連線失敗，請再試一次。");
   } finally {

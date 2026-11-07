@@ -254,7 +254,9 @@ class LLMClient:
                 "content": content or None,
                 "tool_calls": [
                     {"id": c.id, "type": "function",
-                     "function": {"name": c.function.name, "arguments": c.function.arguments}}
+                     "function": {"name": c.function.name, "arguments": c.function.arguments},
+                     # Gemini 的相容端點會附 thought_signature，下一輪必須原樣交回，否則 400；DeepSeek 沒有這欄
+                     **({"extra_content": c.extra_content} if getattr(c, "extra_content", None) else {})}
                     for c in calls
                 ],
             })
