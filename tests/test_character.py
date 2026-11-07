@@ -52,7 +52,7 @@ def test_bundled_tsuzuri_loads():
     d = ROOT / "characters/tsuzuri"
     c = Config.from_env({"CHARACTER_DIR": str(d)})
     assert c.bot_display_name == "綴理" and "夕霧綴理" in c.bot_aliases
-    assert "ボク" in Persona(c.persona_path).text
+    assert "自稱「我」" in Persona(c.persona_path).text
     assert Replies(c.replies_path).warnings == []
     lore = Lore(c.lore_dir)
     assert lore.warnings == []
