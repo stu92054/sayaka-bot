@@ -55,6 +55,21 @@ def test_bundled_kosuzu_song_cards():
     assert m.search("レディバグ")[0].title == "歌曲『レディバグ』"
 
 
+def test_bundled_kosuzu_meets_cards():
+    import re
+
+    from bot.memories import Memories
+
+    m = Memories(ROOT / "characters/kosuzu/memories")
+    meets = [c for c in m.cards if re.match(r"\d{4}-\d{2}-\d{2}『", c.title)]
+    assert len(meets) == 90
+    text = "\n".join(c.text for c in meets)
+    # 口頭禪統一寫成原作的「ちぇすとー」；聽錯的英文寫法不能留下（DOLLCHESTRA 除外）
+    assert "ちぇすとー" in text and not re.search(r"(?<!DOLL)CHEST|Chest", text)
+    assert m.search("おえかき 恐竜")[0].title == "2025-07-05『おえかきかちまちです！』"
+    assert m.search("チェスト 聖誕")[0].title == "2025-12-25『クリスマスプレゼントのお届けです』"
+
+
 def test_character_dir_moves_every_default(tmp_path):
     d = tmp_path / "kosuzu"
     d.mkdir()
