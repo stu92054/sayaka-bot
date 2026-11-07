@@ -2,7 +2,7 @@
 進入點：python -m bot.webchat
 
 環境變數（其餘沿用 bot 的設定，例如 DEEPSEEK_API_KEY、DAILY_COST_BUDGET）：
-  WEBCHAT_CHARACTERS  角色資料夾名稱，逗號分隔（預設 "kosuzu,sayaka"），每個角色各用自己的資料庫 data/web_<key>.sqlite3
+  WEBCHAT_CHARACTERS  角色資料夾名稱，逗號分隔（預設 "kosuzu,sayaka,tsuzuri"），每個角色各用自己的資料庫 data/web_<key>.sqlite3
   WEBCHAT_PASSWORD    通關密碼（必填；網頁每次送訊息都要帶）
   WEBCHAT_HOST／WEBCHAT_PORT  預設 0.0.0.0:8090
   GEMINI_API_KEY      有設定時網頁多一個「Gemini」模型開關（走 Gemini 的 OpenAI 相容端點，另存 data/web_gemini_<key>.sqlite3）
@@ -171,7 +171,7 @@ def make_app(chars: dict[str, Character], password: str) -> web.Application:
 def main() -> int:
     load_dotenv()
     password = os.environ.get("WEBCHAT_PASSWORD", "")
-    keys = [k.strip() for k in os.environ.get("WEBCHAT_CHARACTERS", "kosuzu,sayaka").split(",") if k.strip()]
+    keys = [k.strip() for k in os.environ.get("WEBCHAT_CHARACTERS", "kosuzu,sayaka,tsuzuri").split(",") if k.strip()]
     chars = {k: load_character(k) for k in keys}
     setup_logging(next(iter(chars.values())).services["deepseek"].config)
     if len(password) < 6:
