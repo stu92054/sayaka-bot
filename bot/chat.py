@@ -19,7 +19,7 @@ from .lore import Lore
 from .memories import RECALL_GUIDE, Memories, build_recall_tool
 from .persona import Persona
 from .replies import Replies
-from .text import split_message
+from .text import split_message, to_traditional
 from .tools import WEB_TOOLS_GUIDE, Tool, ToolRunner, suppress_embeds
 from .triggers import Cooldown, Trigger, detect_trigger, is_ignored
 from .vision import attach_images, is_image, load_images, supports_vision
@@ -213,7 +213,7 @@ class ChatService:
             return Reply([self.replies["error"]], trigger, recorded=False)
         except ContentFiltered:
             return Reply([self.replies["content_filter"]], trigger, recorded=False)
-        text = strip_self_name(strip_leading_stamp(text), self.config)
+        text = to_traditional(strip_self_name(strip_leading_stamp(text), self.config))
         if tool_runner is not None and tool_runner.used:
             text = suppress_embeds(text)
         if not text:

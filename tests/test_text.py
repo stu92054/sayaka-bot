@@ -38,3 +38,17 @@ def test_custom_limit():
     assert split_message("abcdef", limit=2) == ["ab", "cd", "ef"]
     with pytest.raises(ValueError):
         split_message("a", limit=0)
+
+
+def test_to_traditional_fixes_stray_simplified():
+    from bot.text import to_traditional
+
+    assert to_traditional("徒町聽到的时候，差點哭出來") == "徒町聽到的時候，差點哭出來"
+    assert to_traditional("めぐ还是很吵，前几天才讲过话") == "めぐ還是很吵，前几天才講過話"
+
+
+def test_to_traditional_keeps_traditional_and_japanese():
+    from bot.text import to_traditional
+
+    text = "蓮ノ空女学院の学園祭、映画を見に来た。我們沒有後悔，茶几裡的著作。"
+    assert to_traditional(text) == text
