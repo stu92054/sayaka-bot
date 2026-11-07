@@ -24,6 +24,52 @@ def test_bundled_character_files_exist():
         assert (d / name).exists(), name
 
 
+def test_bundled_kosuzu_loads():
+    from bot.lore import Lore
+    from bot.persona import Persona
+    from bot.replies import Replies
+
+    d = ROOT / "characters/kosuzu"
+    c = Config.from_env({"CHARACTER_DIR": str(d)})
+    assert c.bot_display_name == "小鈴" and "徒町小鈴" in c.bot_aliases
+    assert "徒町" in Persona(c.persona_path).text
+    assert Replies(c.replies_path).warnings == []
+    lore = Lore(c.lore_dir)
+    assert lore.warnings == []
+    assert lore.files == ["01_個人設定.md", "02_人物關係.md", "03_重要事件時間線.md", "04_日常與小事.md", "05_With×MEETS.md"]
+    assert 10_000 < len(lore.text) < 30_000
+    # 資料包的出處標記、內部路徑不應該進到 lore
+    for junk in ("〔", "台本", "百科", "raw_", ".txt", "間章"):
+        assert junk not in lore.text, junk
+
+
+def test_bundled_kosuzu_song_cards():
+    from bot.memories import Memories
+
+    m = Memories(ROOT / "characters/kosuzu/memories")
+    assert m.warnings == [] and len(m.cards) > 200
+    text = "\n".join(c.text for c in m.cards)
+    # 歌曲卡是以小鈴的角度產生的，不能殘留沙耶香版的標記
+    assert "小鈴有唱" in text and "沙耶香有唱" not in text and "沙耶香沒有唱" not in text
+    assert m.search("小鈴 唱過 哪些歌")[0].title == "歌單：小鈴唱過的歌（總覽）"
+    assert m.search("レディバグ")[0].title == "歌曲『レディバグ』"
+
+
+def test_bundled_kosuzu_meets_cards():
+    import re
+
+    from bot.memories import Memories
+
+    m = Memories(ROOT / "characters/kosuzu/memories")
+    meets = [c for c in m.cards if re.match(r"\d{4}-\d{2}-\d{2}『", c.title)]
+    assert len(meets) == 90
+    text = "\n".join(c.text for c in meets)
+    # 口頭禪統一寫成原作的「ちぇすとー」；聽錯的英文寫法不能留下（DOLLCHESTRA 除外）
+    assert "ちぇすとー" in text and not re.search(r"(?<!DOLL)CHEST|Chest", text)
+    assert m.search("おえかき 恐竜")[0].title == "2025-07-05『おえかきかちまちです！』"
+    assert m.search("チェスト 聖誕")[0].title == "2025-12-25『クリスマスプレゼントのお届けです』"
+
+
 def test_character_dir_moves_every_default(tmp_path):
     d = tmp_path / "kosuzu"
     d.mkdir()
