@@ -143,7 +143,7 @@ async def test_chat_sends_lore_first_and_stable(make_service, fake_openai, lore_
     await svc.deep(500, "KO", "妳跟綴理先輩是怎麼認識的？")
     first, second = (c["messages"] for c in fake_openai.completions.calls)
     assert first[0]["content"] == svc.lore.text
-    assert first[1]["content"] == "你是傲嬌大小姐。"
+    assert first[1]["content"].startswith("你是傲嬌大小姐。\n\n")
     # 前兩則（原作資料＋persona）每次都相同 → 前綴快取可命中
     assert first[:2] == second[:2]
 
@@ -155,7 +155,7 @@ async def test_interject_judge_reuses_chat_prefix(make_service, fake_openai, lor
     fake_openai.completions.replies = ["是", "插嘴"]
     await svc.handle_message(make_message("今天好累"), BOT_ID)
     judge, reply = (c["messages"] for c in fake_openai.completions.calls)
-    assert judge[0]["content"] == svc.lore.text and judge[1]["content"] == "你是傲嬌大小姐。"
+    assert judge[0]["content"] == svc.lore.text and judge[1]["content"] == svc.persona.text
     assert judge[:-1] == reply[:-1]
     assert judge[-1]["content"].startswith(reply[-1]["content"])
     assert "只回答一個字：是 或 否" in judge[-1]["content"]

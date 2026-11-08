@@ -12,7 +12,8 @@ async def test_mention_gets_reply_and_both_sides_recorded(make_service, fake_ope
     call = fake_openai.completions.calls[0]
     assert call["model"] == "deepseek-flash"
     assert call["max_tokens"] == 600
-    assert call["messages"][0] == {"role": "system", "content": "你是傲嬌大小姐。"}
+    assert call["messages"][0]["role"] == "system"
+    assert call["messages"][0]["content"].startswith("你是傲嬌大小姐。\n\n## 現在的情境\n你在一個 Discord")
     assert call["messages"][-1] == {"role": "user", "content": "KO: 大小姐早安"}
     recent = storage.recent_messages(500, 10)
     assert [(m.content, m.is_bot) for m in recent] == [("大小姐早安", False), (fake_openai.completions.default, True)]
@@ -126,7 +127,7 @@ async def test_persona_reload(make_service, fake_openai, persona_file):
     persona_file.write_text("新的人設", encoding="utf-8")
     svc.persona.reload()
     await svc.handle_message(make_message("大小姐"), BOT_ID)
-    assert fake_openai.completions.calls[0]["messages"][0]["content"] == "新的人設"
+    assert fake_openai.completions.calls[0]["messages"][0]["content"].startswith("新的人設\n\n")
 
 
 async def test_content_filter_gets_fixed_reply_not_recorded(make_service, fake_openai, storage):

@@ -57,8 +57,8 @@ def reload_persona_and_replies(bot: "PersonaBot") -> str:
     """重新讀取 persona.md 與 replies.toml，回傳給管理員看的結果。"""
     lines = []
     try:
-        text = bot.persona.reload()
-        lines.append(f"已重新載入人設（{len(text)} 字）。")
+        bot.persona.reload()
+        lines.append(f"已重新載入人設（{len(bot.persona.base)} 字）。")
     except (OSError, ValueError) as exc:
         log.exception("persona 重新載入失敗")
         lines.append(f"人設讀取失敗，沿用舊的人設：{type(exc).__name__}: {exc}")

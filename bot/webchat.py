@@ -9,11 +9,13 @@
   WEBCHAT_GEMINI_MODEL／WEBCHAT_GEMINI_PRICE  預設 gemini-3.8-flash，價格「快取:輸入:輸出」每百萬 tokens（USD）
 
 每個瀏覽器分頁是一段獨立對話（前端產生的 session id 換成 channel id），走和 Discord 私訊相同的流程。
+/group 是 LINE 式的群組聊天（只用 DeepSeek），回話順序見 bot/group.py。
 """
 from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import logging
 import os
 import sys
@@ -25,6 +27,7 @@ from dotenv import load_dotenv
 
 from .chat import ChatService, display_author
 from .config import Config
+from .group import GroupChat, GroupError, load_member
 from .history import HistoryManager
 from .holidays import HolidayCalendar, pricing_years
 from .llm import LLMClient
@@ -89,9 +92,9 @@ def build_service(key: str, backend: str) -> tuple[ChatService, Storage]:
                     "PRICE_TABLE": f"{model}:{os.environ.get('WEBCHAT_GEMINI_PRICE', '0.075:0.75:3.75')}",
                     "DB_PATH": f"data/web_gemini_{key}.sqlite3"})
     config = Config.from_env(env, load_dotenv_file=False)
-    persona = Persona(config.persona_path)
+    persona = Persona(config.persona_path, names=(config.bot_display_name, *config.bot_aliases), scene="web")
     if backend == "gemini":
-        persona.text = persona.text.replace("DeepSeek", "Gemini")
+        persona.swap("DeepSeek", "Gemini")
     lore = Lore(config.lore_dir) if config.lore_dir is not None else None
     memories = Memories(config.memories_dir, results=config.recall_results) if config.memories_dir is not None else None
     storage = Storage(config.db_path)
@@ -135,8 +138,11 @@ async def reply(svc: ChatService, session: str, author: str, text: str) -> list[
     return result.chunks
 
 
-def make_app(chars: dict[str, Character], password: str) -> web.Application:
+def make_app(chars: dict[str, Character], password: str, group: GroupChat | None = None) -> web.Application:
     page = (Path(__file__).parent / "webchat.html").read_text(encoding="utf-8")
+    group_page = (Path(__file__).parent / "webchat_group.html").read_text(encoding="utf-8")
+    if group is None:
+        group = GroupChat({k: load_member(k, c.services["deepseek"]) for k, c in chars.items()})
 
     async def index(_: web.Request) -> web.Response:
         options = "".join(f'<option value="{c.key}">{c.name}</option>' for c in chars.values())
@@ -162,9 +168,56 @@ def make_app(chars: dict[str, Character], password: str) -> web.Application:
         messages = await reply(svc, f"{char.key}:{backend}:{session}", author, text)
         return web.json_response({"messages": messages, "name": char.name})
 
+    async def group_index(_: web.Request) -> web.Response:
+        members = [{"key": m.key, "name": m.name, "color": m.color} for m in group.members.values()]
+        return web.Response(text=group_page.replace("{{MEMBERS}}", json.dumps(members, ensure_ascii=False).replace("</", "<\\/")),
+                            content_type="text/html")
+
+    async def group_body(request: web.Request) -> dict | web.Response:
+        if not hmac.compare_digest(request.headers.get("X-Pass", ""), password):
+            return web.json_response({"error": "通關密碼不對"}, status=403)
+        try:
+            body = await request.json()
+            members = [str(k) for k in body["members"]][:12]
+            session = str(body["session"])[:64]
+        except (KeyError, ValueError, TypeError):
+            return web.json_response({"error": "格式不對"}, status=400)
+        if len(session) < 8:
+            return web.json_response({"error": "格式不對"}, status=400)
+        return {"body": body, "members": members, "session": session}
+
+    async def group_send(request: web.Request) -> web.Response:
+        parsed = await group_body(request)
+        if isinstance(parsed, web.Response):
+            return parsed
+        body = parsed["body"]
+        text = str(body.get("text") or "").strip()[:MAX_TEXT]
+        author = str(body.get("name") or "訪客").strip()[:20] or "訪客"
+        if not text:
+            return web.json_response({"error": "格式不對"}, status=400)
+        try:
+            nxt = await group.send(parsed["session"], parsed["members"], author, str(body.get("identity") or ""), text)
+        except GroupError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        return web.json_response({"next": nxt})
+
+    async def group_speak(request: web.Request) -> web.Response:
+        parsed = await group_body(request)
+        if isinstance(parsed, web.Response):
+            return parsed
+        try:
+            member, messages, ok, nxt = await group.speak(parsed["session"], parsed["members"],
+                                                          str(parsed["body"].get("speaker") or ""))
+        except GroupError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        return web.json_response({"key": member.key, "name": member.name, "messages": messages, "ok": ok, "next": nxt})
+
     app = web.Application(client_max_size=16 * 1024)
     app.router.add_get("/", index)
     app.router.add_post("/api/chat", chat)
+    app.router.add_get("/group", group_index)
+    app.router.add_post("/api/group/send", group_send)
+    app.router.add_post("/api/group/speak", group_speak)
     return app
 
 

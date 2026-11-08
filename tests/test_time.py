@@ -138,7 +138,8 @@ async def test_deep_sends_current_time(make_service, fake_openai):
 async def test_show_current_time_off(make_service, fake_openai):
     svc = make_service(show_current_time=False)
     await svc.handle_message(make_message("hi", mentions=[BOT_ID]), BOT_ID)
-    assert all("現在時間" not in m["content"] for m in fake_openai.completions.calls[0]["messages"])
+    assert all("現在時間" not in m["content"] for m in fake_openai.completions.calls[0]["messages"]
+               if m["role"] != "system")  # 情境說明裡解釋了格式，但訊息本身不帶時間
 
 
 async def test_history_lines_get_stamped(make_service, fake_openai, storage):
@@ -206,7 +207,8 @@ def test_llm_now_uses_bot_timezone(storage, fake_openai):
 
 
 def test_persona_explains_time():
-    text = (ROOT / "characters/sayaka/persona.md").read_text(encoding="utf-8")
+    from bot.persona import Persona
+    text = Persona(ROOT / "characters/sayaka/persona.md").text  # 時間格式寫在共用的情境說明
     assert "（現在時間：…）" in text and "[11/03 21:30]" in text
     assert "不要主動報時" in text
     assert "引號或時間" in text
