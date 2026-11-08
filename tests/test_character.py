@@ -36,8 +36,8 @@ def test_bundled_kosuzu_loads():
     assert Replies(c.replies_path).warnings == []
     lore = Lore(c.lore_dir)
     assert lore.warnings == []
-    assert lore.files == ["01_個人設定.md", "02_人物關係.md", "03_重要事件時間線.md", "04_日常與小事.md", "05_With×MEETS.md"]
-    assert 10_000 < len(lore.text) < 30_000
+    assert lore.files == ["共通_01_社團與成員.md", "01_個人設定.md", "02_人物關係.md", "03_重要事件時間線.md", "04_日常與小事.md", "05_With×MEETS.md"]
+    assert 10_000 < len(lore.text) < 35_000  # 含共通 lore（約 3 千字）
     # 資料包的出處標記、內部路徑不應該進到 lore
     for junk in ("〔", "台本", "百科", "raw_", ".txt", "間章"):
         assert junk not in lore.text, junk
@@ -56,8 +56,8 @@ def test_bundled_tsuzuri_loads():
     assert Replies(c.replies_path).warnings == []
     lore = Lore(c.lore_dir)
     assert lore.warnings == []
-    assert lore.files == ["01_個人設定.md", "02_人物關係.md", "03_重要事件時間線.md", "04_日常與小事.md", "05_With×MEETS.md"]
-    assert 10_000 < len(lore.text) < 30_000
+    assert lore.files == ["共通_01_社團與成員.md", "01_個人設定.md", "02_人物關係.md", "03_重要事件時間線.md", "04_日常與小事.md", "05_With×MEETS.md"]
+    assert 10_000 < len(lore.text) < 35_000  # 含共通 lore（約 3 千字）
     # 資料包的出處標記、內部路徑、OCR 來源不應該進到 lore
     for junk in ("〔", "台本", "百科", "raw_", ".txt", "間章", "中集", "Starsness", "劇場版", "scripts/", "OCR"):
         assert junk not in lore.text, junk

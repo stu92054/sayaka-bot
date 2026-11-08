@@ -32,7 +32,7 @@ def lore_dir(tmp_path):
 def test_shipped_lore_loads():
     lore = Lore(ROOT / "characters/sayaka/lore")
     assert lore.warnings == []
-    assert lore.files == ["01_個人設定.md", "02_人物關係.md", "03_重要事件時間線.md", "04_日常與小事.md",
+    assert lore.files == ["共通_01_社團與成員.md", "01_個人設定.md", "02_人物關係.md", "03_重要事件時間線.md", "04_日常與小事.md",
                           "05_With×MEETS.md"]
     assert lore.text.startswith(LORE_INSTRUCTIONS)
     assert "<lore>" in lore.text and lore.text.endswith("</lore>")
@@ -41,7 +41,31 @@ def test_shipped_lore_loads():
     # 指向未收錄台本的參考、內部路徑、台本統計都已移除
     for junk in ("scripts/", "D:\\", "story_main", "raw_wiki", "語料統計"):
         assert junk not in lore.text, junk
-    assert 10_000 < len(lore.text) < 30_000
+    assert 10_000 < len(lore.text) < 35_000  # 含共通資料；超過就該檢查是不是塞了太多細節（細節放回憶卡）
+
+
+def test_common_lore_comes_first_and_is_shared(tmp_path):
+    common = tmp_path / "characters" / "_common" / "lore"
+    common.mkdir(parents=True)
+    (common / "01_club.md").write_text("社辦有ぺきんだっく", encoding="utf-8")
+    texts = []
+    for key in ("a", "b"):
+        d = tmp_path / "characters" / key / "lore"
+        d.mkdir(parents=True)
+        (d / "01_me.md").write_text(f"我是 {key}", encoding="utf-8")
+        lore = Lore(d)
+        assert lore.files == ["共通_01_club.md", "01_me.md"]
+        texts.append(lore.text)
+    # 共通部分在最前面、每個角色都一樣（前綴相同）
+    head = texts[0][: texts[0].index('<file name="01_me.md">')]
+    assert "ぺきんだっく" in head and texts[1].startswith(head)
+
+
+def test_shipped_common_lore_has_shared_facts():
+    lore = Lore(ROOT / "characters/kosuzu/lore")
+    assert lore.files[0] == "共通_01_社團與成員.md"
+    for fact in ("ぺきんだっく", "シャムロックグリーン", "Edel Note"):
+        assert fact in lore.text, fact
 
 
 def test_instructions_say_reference_only():

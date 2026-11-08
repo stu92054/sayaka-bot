@@ -20,9 +20,18 @@ LORE_INSTRUCTIONS = (
 )
 
 
+def common_dir_for(directory: Path) -> Path:
+    """所有角色共用的原作資料：characters/_common/lore（角色的 lore 是 characters/<key>/lore）。"""
+    return directory.parent.parent / "_common" / "lore"
+
+
 class Lore:
-    def __init__(self, directory: str | Path | None):
+    def __init__(self, directory: str | Path | None, common: str | Path | None = None):
+        """common：共用資料夾，預設是 common_dir_for(directory)；不存在就只讀角色自己的。
+        共用的檔案排在最前面（每個角色都一樣的前綴，之後也方便跨角色命中快取）。"""
         self.directory = Path(directory) if directory is not None else None
+        self.common = Path(common) if common is not None else (
+            common_dir_for(self.directory) if self.directory is not None else None)
         self.text = ""
         self.files: list[str] = []
         self.warnings: list[str] = []
@@ -47,17 +56,20 @@ class Lore:
         if not self.directory.is_dir():
             warnings.append(f"找不到原作資料夾 {self.directory}")
         else:
-            for path in sorted(self.directory.glob("*.md")):
+            sources = [(p, f"共通_{p.name}") for p in sorted(self.common.glob("*.md"))] \
+                if self.common is not None and self.common.is_dir() else []
+            sources += [(p, p.name) for p in sorted(self.directory.glob("*.md"))]
+            for path, name in sources:
                 try:
                     content = path.read_text(encoding="utf-8").strip()
                 except (OSError, UnicodeDecodeError) as exc:
-                    warnings.append(f"{path.name} 讀取失敗（{type(exc).__name__}），已略過")
+                    warnings.append(f"{name} 讀取失敗（{type(exc).__name__}），已略過")
                     continue
                 if not content:
-                    warnings.append(f"{path.name} 是空的，已略過")
+                    warnings.append(f"{name} 是空的，已略過")
                     continue
-                parts.append(f'<file name="{path.name}">\n{content}\n</file>')
-                names.append(path.name)
+                parts.append(f'<file name="{name}">\n{content}\n</file>')
+                names.append(name)
             if not parts:
                 warnings.append(f"{self.directory} 裡沒有可用的 .md 檔")
 
