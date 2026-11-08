@@ -56,11 +56,27 @@ def test_bundled_tsuzuri_loads():
     assert Replies(c.replies_path).warnings == []
     lore = Lore(c.lore_dir)
     assert lore.warnings == []
-    assert lore.files == ["01_個人設定.md", "02_人物關係.md", "03_重要事件時間線.md", "04_日常與小事.md"]
+    assert lore.files == ["01_個人設定.md", "02_人物關係.md", "03_重要事件時間線.md", "04_日常與小事.md", "05_With×MEETS.md"]
     assert 10_000 < len(lore.text) < 30_000
     # 資料包的出處標記、內部路徑、OCR 來源不應該進到 lore
     for junk in ("〔", "台本", "百科", "raw_", ".txt", "間章", "中集", "Starsness", "劇場版", "scripts/", "OCR"):
         assert junk not in lore.text, junk
+
+
+def test_bundled_tsuzuri_meets_cards():
+    import re
+
+    from bot.memories import Memories
+
+    m = Memories(ROOT / "characters/tsuzuri/memories")
+    meets = [c for c in m.cards if re.match(r"\d{4}-\d{2}-\d{2}『", c.title)]
+    assert len(meets) == 110
+    text = "\n".join(c.text for c in meets)
+    # 部室的雞玩偶統一寫成原作的「ぺきんだっく」；聽錯或觀眾的寫法只留在 aliases.txt
+    assert "ぺきんだっく" in text and not re.search(r"ペキンダック|北京ダック|北京烤鴨|スケープゴート", text)
+    assert "ぺきんだっく" in m.search("北京烤鴨 玩偶")[0].text
+    assert m.search("合宿ラジオ")[0].title == "2023-08-12『合宿ラジオ』"
+    assert m.search("ボクの最後のWith×MEETS")[0].title == "2025-03-24『ボクの最後のWith×MEETSだよ。』"
 
 
 def test_bundled_tsuzuri_song_cards():
