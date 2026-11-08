@@ -324,7 +324,7 @@ async def test_full_search_flow(make_service, fake_openai, storage):
     first = fake_openai.completions.calls[0]["messages"]
     guide_at = [m["content"] for m in first].index(WEB_TOOLS_GUIDE)
     assert all(m["role"] == "system" for m in first[:guide_at + 1])  # 工具說明緊接在人設之後
-    assert first[guide_at - 1]["content"] == "你是傲嬌大小姐。"
+    assert first[guide_at - 1]["content"].startswith("你是傲嬌大小姐。\n\n")
     search = next(r for r in svc.llm.usage_today() if r.model == "deepseek-search")
     assert search.calls == 1 and search.cost == pytest.approx(0.00075)  # 搜尋費用記入每日預算
     assert storage.tool_uses_on(svc.llm.today(), 1) == 1

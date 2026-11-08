@@ -54,15 +54,34 @@ def test_shipped_replies_toml_loads_cleanly():
     assert r["deep_description"] == "請村野さやか認真思考後回答一個問題（使用深度模型）"
 
 
+def sayaka_persona(scene="discord"):
+    from bot.config import Config
+    c = Config.from_env({"CHARACTER_DIR": str(ROOT / "characters/sayaka")})
+    return Persona(c.persona_path, names=(c.bot_display_name, *c.bot_aliases), scene=scene)
+
+
 def test_shipped_persona_is_sayaka():
-    text = (ROOT / "characters/sayaka/persona.md").read_text(encoding="utf-8")
-    assert "村野沙耶香" in text
-    assert "大小姐" not in text and "本小姐" not in text
-    assert "## 對話格式" in text and "## 不要做的事" in text
+    p = sayaka_persona()
+    assert "村野沙耶香" in p.base
+    assert "大小姐" not in p.text and "本小姐" not in p.text
+    assert "## 不要做的事" in p.base and "## 對話格式" in p.text
+
+
+def test_persona_holds_only_the_character():
+    """persona.md 只寫角色本身；在哪裡聊、對方是誰都在情境與 audience，換情境時不會互相蓋過。"""
+    for key in ("sayaka", "kosuzu", "tsuzuri"):
+        base = (ROOT / f"characters/{key}/persona.md").read_text(encoding="utf-8")
+        for word in ("Discord", "群組成員", "/deep", "@everyone", "## 對話格式", "台灣"):
+            assert word not in base, (key, word)
+    discord, web = sayaka_persona().text, sayaka_persona("web").text
+    assert "Discord" in discord and "/deep" in discord and "台灣的蓮之空粉絲" in discord
+    assert "Discord" not in web and "/deep" not in web and "一對一" in web
+    group = sayaka_persona().compose("group", "使用者「KO」的身分：教練", others="小鈴", who="KO")
+    assert "LINE 群組" in group and "Discord" not in group and "教練" in group and "{" not in group
 
 
 def test_persona_handles_japanese_name_and_collisions():
-    text = (ROOT / "characters/sayaka/persona.md").read_text(encoding="utf-8")
+    text = sayaka_persona().text
     # 改用日文名後，回覆開頭也不能加上日文名字
     assert "「村野さやか:」" in text and "「さやか:」" in text
     # 暱稱剛好和她同名的成員：照常稱呼、不戒備
@@ -208,7 +227,7 @@ async def test_persona_reload_reloads_both(storage, fake_openai, persona_file, t
         assert "已重新載入人設（3 字）" in msg
         assert "缺少" in msg  # 其他項目缺少的警告會回報給管理員
         assert "重啟" in msg
-        assert bot.persona.text == "新人設"
+        assert bot.persona.base == "新人設"
         assert bot.replies["error"] == "新" and bot.chat.replies["error"] == "新"
     finally:
         await bot.close()
@@ -220,6 +239,6 @@ async def test_persona_reload_failure_keeps_old_persona(storage, fake_openai, pe
         persona_file.write_text("", encoding="utf-8")
         msg = reload_persona_and_replies(bot)
         assert "人設讀取失敗" in msg and "已重新載入固定訊息" in msg
-        assert bot.persona.text == "你是傲嬌大小姐。"
+        assert bot.persona.base == "你是傲嬌大小姐。"
     finally:
         await bot.close()

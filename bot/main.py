@@ -191,7 +191,7 @@ def main() -> int:
         return 1
     log.info("設定：%r", config)
 
-    persona = Persona(config.persona_path)
+    persona = Persona(config.persona_path, names=(config.bot_display_name, *config.bot_aliases), scene="discord")
     replies = Replies(config.replies_path)  # 缺檔或缺項只記 warning，不會中止
     lore = Lore(config.lore_dir) if config.lore_dir is not None else None
     memories = Memories(config.memories_dir, results=config.recall_results) if config.memories_dir is not None else None

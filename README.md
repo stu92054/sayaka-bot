@@ -28,7 +28,7 @@
   後面那句提醒避免她深夜每則都報出幾點、已經勸過休息還一直勸。
   對話紀錄的每行使用者訊息加上發言時間（例如 `[11/02 21:03] KO: 今天的 live 好棒`），
   她因此能回答現在幾點、今天星期幾，也分得出「剛剛」和「昨天」。她自己的回覆不加時間，以免模型學著在回覆前加時間。
-- **Prompt 順序固定**：原作資料（`lore/`）→ `persona.md` 全文 → 頻道摘要 → 近期訊息 → 當前訊息。
+- **Prompt 順序固定**：原作資料（`lore/`）→ 人設（`persona.md` ＋ 情境 ＋ 對方是誰）→ 頻道摘要 → 近期訊息 → 當前訊息。
   最前面兩段內容固定不變，有利 DeepSeek 前綴快取。現在時間每分鐘都會變，所以只放在最後一則訊息；
   已存訊息的發言時間固定含日期、格式不會變，也不影響快取。
 - **成本控管**：每次呼叫記錄 input / output / cache-hit tokens 與費用；今日費用超過 `DAILY_COST_BUDGET` 就只回固定訊息；
@@ -275,7 +275,18 @@ characters/<角色>/
 
 ### persona.md
 
-1. 編輯 `persona.md`（純文字 / Markdown，整份會原封不動放進 system prompt，緊接在原作資料之後）。
+人設分成三層，各寫各的，不會互相蓋過：
+
+| 層 | 檔案 | 寫什麼 |
+|---|---|---|
+| 角色 | 角色資料夾的 `persona.md` | 她是誰、說話方式（含對各種關係的人怎麼稱呼）、情緒、不要做的事、範例。**不寫**在哪裡聊、對方是誰、訊息格式 |
+| 情境 | `bot/scenes/<情境>.md`，所有角色共用 | 在哪裡聊天與平台功能：`discord`（Discord 群組、圖片、/deep）、`web`（網頁一對一）、`group`（網頁 LINE 式群組）；`common.md` 是每個情境都附的訊息格式與安全規則 |
+| 對方是誰 | 程式組裝（`bot/persona.py` 的 `AUDIENCES`；網頁群組用使用者選的身分） | 對方的身分；角色依身分決定稱呼、語氣和距離感 |
+
+三層依序接在原作資料之後。Discord bot 用 `discord` 情境，網頁一對一用 `web`，網頁群組用 `group`。
+情境檔裡的 `{name_tags}`（角色名字與別名）、`{others}`、`{who}` 會自動填入。
+
+1. 編輯 `persona.md` 或情境檔（純文字 / Markdown）。
 2. 在 Discord 輸入 `/persona_reload`（管理員），bot 會重新讀檔，下一則回覆起生效，不用重啟。
 3. 若讀檔失敗（檔案不存在或是空的），會保留舊的人設並回報錯誤。
 
@@ -415,7 +426,8 @@ bot/
   llm.py        # DeepSeek 呼叫、重試、預算、用量紀錄
   commands.py   # slash commands
   storage.py    # SQLite
-  persona.py    # persona.md 載入
+  persona.py    # persona.md 載入，與情境、對方身分組成 system prompt
+  scenes/       # 情境說明（discord／web／group＋common），所有角色共用
   replies.py    # replies.toml 載入（固定訊息、指令說明）
   tools.py      # 工具框架（function calling）與查資料工具
   web.py        # DeepSeek Search／Fetch API 客戶端

@@ -186,8 +186,10 @@ class ChatService:
                        *, model: str, purpose: str = "chat", max_tokens: int | None = None,
                        thinking: str | None = None, total_timeout: float | None = None,
                        reasoning_effort: str | None = None, call_timeout: float | None = None,
-                       tool_runner: ToolRunner | None = None, images: list[str] | None = None) -> Reply:
-        """images：要附在最後一則訊息的圖片（data URL）。圖片被 API 拒絕時改用純文字重試一次。"""
+                       tool_runner: ToolRunner | None = None, images: list[str] | None = None,
+                       clean: Callable[[str], str] | None = None) -> Reply:
+        """images：要附在最後一則訊息的圖片（data URL）。圖片被 API 拒絕時改用純文字重試一次。
+        clean：寫進歷史前再整理一次回覆（群組聊天用來拿掉替別人寫的台詞）。"""
         max_tokens = max_tokens or self.config.max_reply_tokens
 
         async def ask(messages: list[dict[str, Any]]) -> str:
@@ -214,6 +216,8 @@ class ChatService:
         except ContentFiltered:
             return Reply([self.replies["content_filter"]], trigger, recorded=False)
         text = to_traditional(strip_self_name(strip_leading_stamp(text), self.config))
+        if clean is not None:
+            text = clean(text)
         if tool_runner is not None and tool_runner.used:
             text = suppress_embeds(text)
         if not text:

@@ -4,3 +4,6 @@ data/
 __pycache__/
 .pytest_cache/
 .venv/
+
+# 評測結果（每次重跑會覆蓋）
+evals/*/result_*.md
