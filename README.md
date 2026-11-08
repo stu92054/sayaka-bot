@@ -268,8 +268,8 @@ characters/<角色>/
 | 資料夾 | 角色 | 內容 |
 |---|---|---|
 | `characters/sayaka` | 村野沙耶香（畢業後，升上大學） | persona、lore 01–05、回憶卡（With×MEETS、歌曲） |
-| `characters/kosuzu` | 徒町小鈴（103 期畢業後、106 期入學前，即將升三年級） | persona、lore 01–04、回憶卡（歌曲；With×MEETS 還沒做） |
-| `characters/tsuzuri` | 夕霧綴理（102 期畢業一年，大學一年級剛結束；時間點同小鈴） | persona、lore 01–04、回憶卡（歌曲；With×MEETS 還沒做） |
+| `characters/kosuzu` | 徒町小鈴（103 期畢業後、106 期入學前，即將升三年級） | persona、lore 01–05、回憶卡（With×MEETS、歌曲） |
+| `characters/tsuzuri` | 夕霧綴理（102 期畢業一年，大學一年級剛結束；時間點同小鈴） | persona、lore 01–05、回憶卡（With×MEETS、歌曲） |
 
 ## 5. 修改人設與固定訊息
 
