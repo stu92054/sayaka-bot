@@ -85,6 +85,7 @@ class Storage:
         self._conn = sqlite3.connect(str(path), check_same_thread=False)
         self._lock = threading.Lock()
         with self._lock:
+            self._conn.execute("PRAGMA secure_delete = ON")  # 刪掉的對話直接覆寫，不留在檔案裡
             self._conn.executescript(SCHEMA)
             cols = {r[1] for r in self._conn.execute("PRAGMA table_info(usage)")}
             for col, ddl in (("peak", "INTEGER NOT NULL DEFAULT 0"), ("cost", "REAL NOT NULL DEFAULT 0"),

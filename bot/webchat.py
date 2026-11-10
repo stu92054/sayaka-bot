@@ -10,6 +10,8 @@
 
 每個瀏覽器分頁是一段獨立對話（前端產生的 session id 換成 channel id），走和 Discord 私訊相同的流程。
 /group 是 LINE 式的群組聊天（只用 DeepSeek），回話順序見 bot/group.py。
+群組聊天的對話列表（設定＋完整對話）存在 data/web_groups.sqlite3，換裝置也能接著聊；
+網頁只有一組共用密碼，知道密碼的人都看得到所有群組對話。
 """
 from __future__ import annotations
 
@@ -28,6 +30,7 @@ from dotenv import load_dotenv
 from .chat import ChatService, display_author
 from .config import Config
 from .group import GroupChat, GroupError, load_member
+from .group_rooms import GroupRooms
 from .history import HistoryManager
 from .holidays import HolidayCalendar, pricing_years
 from .llm import LLMClient
@@ -138,11 +141,19 @@ async def reply(svc: ChatService, session: str, author: str, text: str) -> list[
     return result.chunks
 
 
-def make_app(chars: dict[str, Character], password: str, group: GroupChat | None = None) -> web.Application:
+def make_app(chars: dict[str, Character], password: str, group: GroupChat | None = None,
+             rooms: GroupRooms | None = None) -> web.Application:
     page = (Path(__file__).parent / "webchat.html").read_text(encoding="utf-8")
     group_page = (Path(__file__).parent / "webchat_group.html").read_text(encoding="utf-8")
     if group is None:
-        group = GroupChat({k: load_member(k, c.services["deepseek"]) for k, c in chars.items()})
+        first = next(iter(chars.values()))
+        group = GroupChat({k: load_member(k, c.services["deepseek"]) for k, c in chars.items()},
+                          gm=dict(first.services))  # GM 可以用 DeepSeek 或（有金鑰時）Gemini
+    if rooms is None:
+        rooms = GroupRooms(":memory:")
+
+    def authorized(request: web.Request) -> bool:
+        return hmac.compare_digest(request.headers.get("X-Pass", ""), password)
 
     async def index(_: web.Request) -> web.Response:
         options = "".join(f'<option value="{c.key}">{c.name}</option>' for c in chars.values())
@@ -170,11 +181,12 @@ def make_app(chars: dict[str, Character], password: str, group: GroupChat | None
 
     async def group_index(_: web.Request) -> web.Response:
         members = [{"key": m.key, "name": m.name, "color": m.color} for m in group.members.values()]
-        return web.Response(text=group_page.replace("{{MEMBERS}}", json.dumps(members, ensure_ascii=False).replace("</", "<\\/")),
-                            content_type="text/html")
+        gms = list(group.gm) or ["deepseek"]  # 有 Gemini 金鑰時才會有 gemini
+        page = group_page.replace("{{MEMBERS}}", json.dumps(members, ensure_ascii=False).replace("</", "<\\/"))
+        return web.Response(text=page.replace("{{GMS}}", json.dumps(gms)), content_type="text/html")
 
     async def group_body(request: web.Request) -> dict | web.Response:
-        if not hmac.compare_digest(request.headers.get("X-Pass", ""), password):
+        if not authorized(request):
             return web.json_response({"error": "通關密碼不對"}, status=403)
         try:
             body = await request.json()
@@ -195,11 +207,23 @@ def make_app(chars: dict[str, Character], password: str, group: GroupChat | None
         author = str(body.get("name") or "訪客").strip()[:20] or "訪客"
         if not text:
             return web.json_response({"error": "格式不對"}, status=400)
+        identity, situation, time_ = (str(body.get(k) or "")[:200] for k in ("identity", "situation", "time"))
         try:
-            nxt = await group.send(parsed["session"], parsed["members"], author, str(body.get("identity") or ""), text)
+            nxt = await group.send(parsed["session"], parsed["members"], author, identity, text,
+                                   situation=situation, time=time_, play=str(body.get("play") or "off"),
+                                   gm=str(body.get("gm") or "deepseek"), gm_style=str(body.get("gm_style") or "short"))
         except GroupError as exc:
             return web.json_response({"error": str(exc)}, status=400)
-        return web.json_response({"next": nxt})
+        extra = {k: str(body.get(k) or "")[:20] for k in ("play", "gm", "gm_style")}
+        rooms.save_settings(parsed["session"], parsed["members"], identity, situation, time_, author, extra)
+        rooms.add_line(parsed["session"], "user", author, text)
+        report = group.gm_report(parsed["session"], parsed["members"])
+        if report["narration"]:
+            stamp = f"[{report['time']}] " if report["time"] else ""
+            rooms.add_line(parsed["session"], "narrator", "旁白", stamp + report["narration"])
+        if report["ooc"]:
+            rooms.add_line(parsed["session"], "gm", "GM", report["ooc"])
+        return web.json_response({"next": nxt, **report})
 
     async def group_speak(request: web.Request) -> web.Response:
         parsed = await group_body(request)
@@ -210,7 +234,31 @@ def make_app(chars: dict[str, Character], password: str, group: GroupChat | None
                                                           str(parsed["body"].get("speaker") or ""))
         except GroupError as exc:
             return web.json_response({"error": str(exc)}, status=400)
+        if ok and messages:
+            rooms.add_line(parsed["session"], member.key, member.name, "\n".join(messages))
         return web.json_response({"key": member.key, "name": member.name, "messages": messages, "ok": ok, "next": nxt})
+
+    async def room_list(request: web.Request) -> web.Response:
+        if not authorized(request):
+            return web.json_response({"error": "通關密碼不對"}, status=403)
+        return web.json_response({"rooms": rooms.list()})
+
+    async def room_get(request: web.Request) -> web.Response:
+        if not authorized(request):
+            return web.json_response({"error": "通關密碼不對"}, status=403)
+        room = rooms.get(request.match_info["room"])
+        if room is None:
+            return web.json_response({"error": "找不到這個群組"}, status=404)
+        return web.json_response(room)
+
+    async def room_delete(request: web.Request) -> web.Response:
+        if not authorized(request):
+            return web.json_response({"error": "通關密碼不對"}, status=403)
+        room_id = request.match_info["room"]
+        room = rooms.get(room_id)
+        if room is not None:  # 角色記得的這場對話也一起清掉，不只是列表
+            group.forget(room_id, room["members"])
+        return web.json_response({"deleted": rooms.delete(room_id)})
 
     app = web.Application(client_max_size=16 * 1024)
     app.router.add_get("/", index)
@@ -218,6 +266,9 @@ def make_app(chars: dict[str, Character], password: str, group: GroupChat | None
     app.router.add_get("/group", group_index)
     app.router.add_post("/api/group/send", group_send)
     app.router.add_post("/api/group/speak", group_speak)
+    app.router.add_get("/api/group/rooms", room_list)
+    app.router.add_get("/api/group/rooms/{room}", room_get)
+    app.router.add_delete("/api/group/rooms/{room}", room_delete)
     return app
 
 
@@ -233,10 +284,12 @@ def main() -> int:
     if not os.environ.get("DEEPSEEK_API_KEY"):
         log.error("缺少 DEEPSEEK_API_KEY")
         return 1
+    rooms = GroupRooms(Path("data/web_groups.sqlite3"))
     try:
-        web.run_app(make_app(chars, password), host=os.environ.get("WEBCHAT_HOST", "0.0.0.0"),
+        web.run_app(make_app(chars, password, rooms=rooms), host=os.environ.get("WEBCHAT_HOST", "0.0.0.0"),
                     port=int(os.environ.get("WEBCHAT_PORT", "8090")), print=None)
     finally:
+        rooms.close()
         for c in chars.values():
             for st in c.storages:
                 st.close()
