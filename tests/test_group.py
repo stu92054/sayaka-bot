@@ -250,7 +250,8 @@ async def test_directives_reach_only_the_gm(group):
 
 async def test_analysis_only_directive_needs_no_reply(group):
     import json
-    gm_reply = json.dumps({"time": "", "narration": "", "secret": {}, "ooc": "沙耶香目前最在意製作人的作息。"},
+    gm_reply = json.dumps({"time": "", "narration": "", "secret": {"to": "綴理", "text": "妳看到糖袋破了"},
+                           "ooc": "沙耶香目前最在意製作人的作息。"},
                           ensure_ascii=False)
     group.client.completions.replies = [gm_reply]
     nxt = await group.send("s-dir-0002", KEYS, "KO", "fan", "{分析一下大家對製作人的態度}", play="fun", gm_style="trpg")
@@ -258,4 +259,20 @@ async def test_analysis_only_directive_needs_no_reply(group):
     assert group.gm_report("s-dir-0002", KEYS)["ooc"] == "沙耶香目前最在意製作人的作息。"
     # 分析類指令答一次就好，不留成持續有效的規則（之前會每回合重答）
     assert group.directions[group.channel("s-dir-0002", group.room(KEYS))] == []
+
+
+async def test_fullwidth_braces_and_description_fallback(group):
+    import json
+    # GM 把服裝描述寫成以成員開頭的旁白：保險會整段擋掉，改顯示成戲外說明，不進角色記憶
+    gm_reply = json.dumps({"time": "", "narration": "沙耶香穿著深藍色女僕裝。小鈴綁著蝴蝶結圍裙。",
+                           "secret": {}, "ooc": ""}, ensure_ascii=False)
+    group.client.completions.replies = [gm_reply]
+    nxt = await group.send("s-dir-0003", KEYS, "KO", "fan", "｛描述一下三人當前的服裝｝", play="fun", gm_style="short")
+    report = group.gm_report("s-dir-0003", KEYS)
+    assert nxt is None and report["narration"] == ""
+    assert report["ooc"] == "沙耶香穿著深藍色女僕裝。小鈴綁著蝴蝶結圍裙。"
+    ch = group.channel("s-dir-0003", group.room(KEYS))
+    assert group.members["sayaka"].svc.history.recent(ch) == []  # 全形括號的指令也沒有被當成台詞
+    gm_prompt = group.client.completions.calls[0]["messages"]
+    assert "描述一下三人當前的服裝" in gm_prompt[-1]["content"] and '"ooc"' in gm_prompt[0]["content"]
 

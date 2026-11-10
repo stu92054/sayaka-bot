@@ -414,6 +414,7 @@ $("f").onsubmit = async e => {
     mine.querySelector(".read").textContent = `已讀 ${room.members.length}`;
     if (res.ooc) narr(res.ooc, "GM（戲外）", true);
     if (res.narration) { await sleep(400); narr(res.narration, res.time || ""); }
+    if (!next && !res.narration && !res.ooc) note("（這次沒有人回應，可以換個說法再試）");
     while (next) {
       const m = byKey[next];
       await sleep(700 + Math.random() * 1500);
