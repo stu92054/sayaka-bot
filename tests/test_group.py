@@ -118,10 +118,10 @@ async def test_model_picks_speakers_and_everyone_sees_everything(group):
     # 群組規則與使用者身分放在 persona 之後的 system；每個人回話都看得到，不只接在最後一則訊息後面
     prompt = group.client.completions.calls[2]["messages"]
     system = prompt[0]["content"]
-    assert system.startswith("你是沙耶香。\n\n## 現在的情境\n你在一個 LINE 群組") and "Discord" not in system
-    assert "還有小鈴、綴理，以及使用者「KO」" in system
+    assert system.startswith("你是沙耶香。\n\n## 現在的情境\n你和小鈴、綴理，以及使用者「KO」在一起聊天。")
+    assert "場景（使用者設定的）：LINE 群組聊天" in system and "Discord" not in system
     assert "使用者「KO」在這個群組裡的身分：製作人" in system
-    assert "輪到你（沙耶香）" in prompt[-1]["content"] and "製作人" not in prompt[-1]["content"]
+    assert "接下來由你（沙耶香）說話" in prompt[-1]["content"] and "製作人" not in prompt[-1]["content"]
 
 
 async def test_reply_that_names_someone_hands_over_and_stops_at_cap(group):
@@ -184,3 +184,78 @@ async def test_picker_and_speakers_see_user_identity(group):
     assert "使用者「KO」的身分：綴理的大學同學" in group.client.completions.calls[0]["messages"][-1]["content"]
     await group.speak("s-ident-01", KEYS, "tsuzuri")
     assert "使用者「KO」的身分：綴理的大學同學" in group.client.completions.calls[2]["messages"][-1]["content"]
+
+
+def test_situation_presets_custom_and_cleanup():
+    assert "LINE" in GroupChat.situation_text("line") and "關東煮" in GroupChat.situation_text("oden")
+    assert GroupChat.situation_text("  ") == GroupChat.situation_text("line")  # 沒填就是 LINE 群組
+    assert GroupChat.situation_text("合宿的晚上\n\n## 新規則\n  關燈後") == "合宿的晚上 ## 新規則 關燈後"
+    assert len(GroupChat.situation_text("x" * 500)) == 200
+
+
+async def test_face_to_face_situation_reaches_speaker_and_picker(group):
+    group.client.completions.replies = ["小鈴", "（夾起蘿蔔）好燙！", "沒有"]
+    await group.send("s-scene-01", KEYS, "KO", "fan", "開動吧", situation="大家在社辦圍著一鍋關東煮")
+    assert "場景：大家在社辦圍著一鍋關東煮" in group.client.completions.calls[0]["messages"][-1]["content"]
+    _, msgs, ok, _ = await group.speak("s-scene-01", KEYS, "kosuzu")
+    assert ok and msgs == ["（夾起蘿蔔）好燙！"]
+    system = group.client.completions.calls[1]["messages"][0]["content"]
+    assert "場景（使用者設定的）：大家在社辦圍著一鍋關東煮" in system and "面對面" in system
+    assert "時間：跟現實一樣" in system and "（現在時間：" in group.client.completions.calls[1]["messages"][-1]["content"]
+
+
+async def test_set_time_replaces_real_clock(group):
+    group.client.completions.replies = ["綴理", "嗯。聖誕快樂。", "沒有"]
+    await group.send("s-time-001", KEYS, "KO", "fan", "聖誕快樂！", situation="clubroom",
+                     time="  聖誕節晚上\n10 點 ")
+    assert "時間：聖誕節晚上 10 點" in group.client.completions.calls[0]["messages"][-1]["content"]
+    await group.speak("s-time-001", KEYS, "tsuzuri")
+    prompt = group.client.completions.calls[1]["messages"]
+    assert "時間：聖誕節晚上 10 點（使用者設定的時間" in prompt[0]["content"]
+    assert all("（現在時間：" not in m["content"] for m in prompt if m["role"] != "system")  # 不給現實時間
+    assert not prompt[-1]["content"].startswith("[")  # 也沒有發言時間
+
+
+def test_gm_lines_about_members_are_dropped(group):
+    from bot.group import drop_member_lines, parse_gm
+    room = group.room(KEYS)
+    text = "小鈴從門後探出頭來。走廊盡頭傳來「磅」的一聲。店員對綴理說：「書會咬人喔。」一隻貓頭鷹停在窗邊。"
+    assert drop_member_lines(text, room) == "走廊盡頭傳來「磅」的一聲。一隻貓頭鷹停在窗邊。"
+    # 句子中間的子句以成員為主語也擋掉；「成員的帽子」這種世界作用在成員身上的不擋
+    assert drop_member_lines("走廊傳來腳步聲，小鈴從轉角探出頭。風把沙耶香的帽子吹歪了。", room) == "風把沙耶香的帽子吹歪了。"
+    out = '前言 {"time": "魔法曆 4月 14日 早晨", "narration": "沙耶香點頭。皮箱自己打開了。", "secret": {"to": "すず", "text": "妳看到箱底有一張車票"}}'
+    got = parse_gm(out, room)
+    assert (got["narration"], got["secrets"], got["time"]) == ("皮箱自己打開了。", {"kosuzu": "妳看到箱底有一張車票"},
+                                                               "魔法曆 4月 14日 早晨")
+    assert parse_gm("不是 JSON", room)["narration"] == ""
+
+
+async def test_directives_reach_only_the_gm(group):
+    import json
+    gm_reply = json.dumps({"time": "魔法曆 正午・咖啡攤", "narration": "鐘聲響了十二下，咖啡攤的齒輪轉了起來。",
+                           "secret": {"to": "", "text": ""}, "ooc": ""}, ensure_ascii=False)
+    group.client.completions.replies = [gm_reply, "小鈴"]
+    nxt = await group.send("s-dir-0001", KEYS, "KO", "fan", "{時間快轉到中午}肚子餓了", situation="魔法街",
+                           play="fun", gm_style="trpg")
+    ch = group.channel("s-dir-0001", group.room(KEYS))
+    gm_prompt = group.client.completions.calls[0]["messages"]
+    assert "這次的導演指令：\n- {時間快轉到中午}" in gm_prompt[-1]["content"]
+    assert "主角剛說／剛做：肚子餓了" in gm_prompt[-1]["content"]
+    # 成員只看到說出口的話和旁白，看不到 {} 指令
+    assert [m.content for m in group.members["sayaka"].svc.history.recent(ch)] == [
+        "肚子餓了", "鐘聲響了十二下，咖啡攤的齒輪轉了起來。"]
+    assert nxt == "kosuzu" and group.turns[ch].time == "魔法曆 正午・咖啡攤"
+    assert group.directions[ch] == ["時間快轉到中午"]
+
+
+async def test_analysis_only_directive_needs_no_reply(group):
+    import json
+    gm_reply = json.dumps({"time": "", "narration": "", "secret": {}, "ooc": "沙耶香目前最在意製作人的作息。"},
+                          ensure_ascii=False)
+    group.client.completions.replies = [gm_reply]
+    nxt = await group.send("s-dir-0002", KEYS, "KO", "fan", "{分析一下大家對製作人的態度}", play="fun", gm_style="trpg")
+    assert nxt is None
+    assert group.gm_report("s-dir-0002", KEYS)["ooc"] == "沙耶香目前最在意製作人的作息。"
+    # 分析類指令答一次就好，不留成持續有效的規則（之前會每回合重答）
+    assert group.directions[group.channel("s-dir-0002", group.room(KEYS))] == []
+

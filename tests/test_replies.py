@@ -76,7 +76,8 @@ def test_persona_holds_only_the_character():
     discord, web = sayaka_persona().text, sayaka_persona("web").text
     assert "Discord" in discord and "/deep" in discord and "台灣的蓮之空粉絲" in discord
     assert "Discord" not in web and "/deep" not in web and "一對一" in web
-    group = sayaka_persona().compose("group", "使用者「KO」的身分：教練", others="小鈴", who="KO")
+    group = sayaka_persona().compose("group", "使用者「KO」的身分：教練", others="小鈴", who="KO",
+                                     situation="LINE 群組聊天", time="跟現實一樣", play="一般聊天")
     assert "LINE 群組" in group and "Discord" not in group and "教練" in group and "{" not in group
     # 拆分後曾經漏掉「顯示名稱就是對方的名字」，角色改叫範例裡的 KO 或說不知道對方叫什麼
     for text in (discord, web, group):
