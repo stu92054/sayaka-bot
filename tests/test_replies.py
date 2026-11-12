@@ -69,7 +69,7 @@ def test_shipped_persona_is_sayaka():
 
 def test_persona_holds_only_the_character():
     """persona.md 只寫角色本身；在哪裡聊、對方是誰都在情境與 audience，換情境時不會互相蓋過。"""
-    for key in ("sayaka", "kosuzu", "tsuzuri"):
+    for key in ("sayaka", "kosuzu", "tsuzuri", "kozue", "ginko", "kaho"):
         base = (ROOT / f"characters/{key}/persona.md").read_text(encoding="utf-8")
         for word in ("Discord", "群組成員", "/deep", "@everyone", "## 對話格式", "台灣"):
             assert word not in base, (key, word)

@@ -63,6 +63,32 @@ def test_bundled_tsuzuri_loads():
         assert junk not in lore.text, junk
 
 
+@pytest.mark.parametrize("key, name, full, self_word", [
+    ("kozue", "梢", "乙宗梢", "自稱「我」"),
+    ("ginko", "吟子", "百生吟子", "自稱「我」"),
+    ("kaho", "花帆", "日野下花帆", "自稱「我」"),
+])
+def test_bundled_cerise_members_load(key, name, full, self_word):
+    """梢、吟子、花帆（2026-11-13 加入）：目前只有 lore 01–03，卡片語音、With×MEETS、歌曲卡還沒做。"""
+    from bot.lore import Lore
+    from bot.persona import Persona
+    from bot.replies import Replies
+
+    d = ROOT / f"characters/{key}"
+    c = Config.from_env({"CHARACTER_DIR": str(d)})
+    assert c.bot_display_name == name and full in c.bot_aliases
+    assert self_word in Persona(c.persona_path).text
+    assert Replies(c.replies_path).warnings == []
+    lore = Lore(c.lore_dir)
+    assert lore.warnings == []
+    assert lore.files == ["共通_01_社團與成員.md", "01_個人設定.md", "02_人物關係.md", "03_重要事件時間線.md"]
+    assert 10_000 < len(lore.text) < 35_000  # 含共通 lore（約 2,400 字）
+    # 資料包的出處標記、內部路徑、作品名不應該進到 lore
+    for junk in ("〔", "台本", "百科", "raw_", ".txt", "間章", "中集", "Starsness", "劇場版", "scripts/", "OCR",
+                 "待核對", "待補", "BD 特典", "入場者特典", "蓮ノート", "`"):
+        assert junk not in lore.text, (key, junk)
+
+
 def test_bundled_tsuzuri_meets_cards():
     import re
 
