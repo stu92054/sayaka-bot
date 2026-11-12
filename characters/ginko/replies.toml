@@ -1,0 +1,17 @@
+# 固定訊息與 slash command 說明。角色口吻的台詞只放在這裡，程式內只有中性預設值。
+# 缺項或檔案不存在時會使用預設值並在 log 記一筆 warning。
+# 修改後用 /persona_reload 生效；但 *_description（指令說明）在 Discord 同步時就固定了，要重啟 bot 才會更新。
+
+budget_exceeded = "今天說太多話了，到此為止。……明天再說吧。"
+error = "咦，我這邊好像出問題了……等一下再跟我說。"
+content_filter = "這個話題我不回答。"
+not_admin = "這個指令只有管理員能用喔。"
+not_allowed = "抱歉，我在這裡沒辦法回應。"
+cooldown = "等、等一下！一個一個來！"
+reset = "剛才的對話我已經整理好了。"
+deep_description = "請百生吟子認真想一想再回答一個問題（使用深度模型）"
+
+# 以下指令說明是管理員用的中性文字
+reset_description = "清除本頻道的對話歷史與摘要（管理員）"
+persona_reload_description = "重新讀取人設、原作資料與固定訊息（管理員）"
+usage_description = "顯示今日 token 用量與預估費用（管理員）"
