@@ -65,7 +65,6 @@ def test_bundled_tsuzuri_loads():
 
 @pytest.mark.parametrize("key, name, full, self_word", [
     ("kozue", "梢", "乙宗梢", "自稱「我」"),
-    ("ginko", "吟子", "百生吟子", "自稱「我」"),
     ("kaho", "花帆", "日野下花帆", "自稱「我」"),
 ])
 def test_bundled_cerise_members_load(key, name, full, self_word):
@@ -87,6 +86,56 @@ def test_bundled_cerise_members_load(key, name, full, self_word):
     for junk in ("〔", "台本", "百科", "raw_", ".txt", "間章", "中集", "Starsness", "劇場版", "scripts/", "OCR",
                  "待核對", "待補", "BD 特典", "入場者特典", "蓮ノート", "`"):
         assert junk not in lore.text, (key, junk)
+
+
+def test_bundled_ginko_loads():
+    """吟子（2026-11-14）：lore 01–05、歌曲卡、With×MEETS 回憶卡都做完，從梢、花帆的共用測試拆出來。"""
+    from bot.lore import Lore
+    from bot.persona import Persona
+    from bot.replies import Replies
+
+    c = Config.from_env({"CHARACTER_DIR": str(ROOT / "characters/ginko")})
+    assert c.bot_display_name == "吟子" and "百生吟子" in c.bot_aliases
+    assert "自稱「我」" in Persona(c.persona_path).text
+    assert Replies(c.replies_path).warnings == []
+    lore = Lore(c.lore_dir)
+    assert lore.warnings == []
+    assert lore.files == ["共通_01_社團與成員.md", "01_個人設定.md", "02_人物關係.md", "03_重要事件時間線.md",
+                          "04_日常與小事.md", "05_With×MEETS.md"]
+    assert 10_000 < len(lore.text) < 35_000  # 含共通 lore（約 2,400 字）
+    for junk in ("〔", "台本", "百科", "raw_", ".txt", "間章", "中集", "Starsness", "劇場版", "scripts/", "OCR",
+                 "待核對", "待補", "BD 特典", "入場者特典", "蓮ノート", "`", "meets_", "直播 20", "agy"):
+        assert junk not in lore.text, junk
+
+
+def test_bundled_ginko_meets_cards():
+    import re
+
+    from bot.memories import Memories
+
+    m = Memories(ROOT / "characters/ginko/memories")
+    meets = [c for c in m.cards if re.match(r"\d{4}-\d{2}-\d{2}『", c.title)]
+    assert len(meets) == 82  # 入學前的 103 期 Fes×LIVE 三場不收
+    assert not any(c.text.startswith("103 期") for c in meets)
+    # 內文的人名、歌名統一成原作寫法（Whisper 常把名字聽成「桃瀬銀子」）；關鍵詞行可以留別名供檢索
+    body = "\n".join(l for c in meets for l in c.text.splitlines() if l.startswith("- "))
+    assert not re.search(r"桃瀬|銀子|乙女アンソロジー|ツキヨミクラゲ|夢煩い|Cerise Bouquet", body)
+    assert m.search("おツルさん 布偶")[0].title.startswith("20")
+    assert m.search("代表色 發表 百人一首")[0].title == "2024-10-03『1年生ズからのお知らせ！』"
+
+
+def test_bundled_ginko_song_cards():
+    from bot.memories import Memories
+
+    m = Memories(ROOT / "characters/ginko/memories")
+    assert m.warnings == [] and len(m.cards) > 200
+    text = "\n".join(c.text for c in m.cards)
+    # 歌曲卡是以吟子的角度產生的，不能殘留其他角色版的標記
+    assert "吟子有唱" in text and "小鈴有唱" not in text and "綴理有唱" not in text
+    assert m.search("吟子 唱過 哪些歌")[0].title == "歌單：吟子唱過的歌（總覽）"
+    assert m.search("月夜見海月")[0].title == "歌曲『月夜見海月』"
+    # 維基看不出來的作詞者：卡片語音說『月夜見海月』的歌詞是吟子寫的
+    assert "歌詞是吟子寫的" in m.search("月夜見海月")[0].text
 
 
 def test_bundled_tsuzuri_meets_cards():
