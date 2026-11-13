@@ -63,8 +63,28 @@ def test_bundled_tsuzuri_loads():
         assert junk not in lore.text, junk
 
 
+def test_bundled_kozue_loads():
+    """梢：lore 01–05（2026-11-14 加上卡片語音 04、With×MEETS 05）。"""
+    from bot.lore import Lore
+    from bot.persona import Persona
+    from bot.replies import Replies
+
+    d = ROOT / "characters/kozue"
+    c = Config.from_env({"CHARACTER_DIR": str(d)})
+    assert c.bot_display_name == "梢" and "乙宗梢" in c.bot_aliases
+    assert "自稱「我」" in Persona(c.persona_path).text
+    assert Replies(c.replies_path).warnings == []
+    lore = Lore(c.lore_dir)
+    assert lore.warnings == []
+    assert lore.files == ["共通_01_社團與成員.md", "01_個人設定.md", "02_人物關係.md", "03_重要事件時間線.md",
+                          "04_日常與小事.md", "05_With×MEETS.md"]
+    assert 10_000 < len(lore.text) < 35_000  # 含共通 lore（約 2,400 字）
+    for junk in ("〔", "台本", "百科", "raw_", ".txt", "間章", "中集", "Starsness", "劇場版", "scripts/", "OCR",
+                 "待核對", "待補", "BD 特典", "入場者特典", "蓮ノート", "`", "（直播）", "直播、20"):
+        assert junk not in lore.text, junk
+
+
 @pytest.mark.parametrize("key, name, full, self_word", [
-    ("kozue", "梢", "乙宗梢", "自稱「我」"),
     ("ginko", "吟子", "百生吟子", "自稱「我」"),
     ("kaho", "花帆", "日野下花帆", "自稱「我」"),
 ])
@@ -131,6 +151,22 @@ def test_bundled_kosuzu_song_cards():
     assert m.search("レディバグ")[0].title == "歌曲『レディバグ』"
 
 
+def test_bundled_kozue_song_cards():
+    from bot.memories import Memories
+
+    m = Memories(ROOT / "characters/kozue/memories")
+    assert m.warnings == [] and len(m.cards) > 200
+    text = "\n".join(c.text for c in m.cards)
+    # 歌曲卡是以梢的角度產生的，不能殘留其他角色版的標記
+    assert "梢有唱" in text and "綴理有唱" not in text and "小鈴有唱" not in text
+    assert m.search("梢 唱過 哪些歌")[0].title == "歌單：梢唱過的歌（總覽）"
+    # 「水彩世界」另有 104 Ver.，原版要在前幾名
+    hits = {c.title: c for c in m.search("水彩世界")[:3]}
+    assert "歌曲『水彩世界』" in hits
+    # 維基看不出來的關係：梢一個人作的曲、和花帆的第一個舞台
+    assert "梢一個人作的曲" in hits["歌曲『水彩世界』"].text
+
+
 def test_bundled_kosuzu_meets_cards():
     import re
 
@@ -144,6 +180,22 @@ def test_bundled_kosuzu_meets_cards():
     assert "ちぇすとー" in text and not re.search(r"(?<!DOLL)CHEST|Chest", text)
     assert m.search("おえかき 恐竜")[0].title == "2025-07-05『おえかきかちまちです！』"
     assert m.search("チェスト 聖誕")[0].title == "2025-12-25『クリスマスプレゼントのお届けです』"
+
+
+def test_bundled_kozue_meets_cards():
+    import re
+
+    from bot.memories import Memories
+
+    m = Memories(ROOT / "characters/kozue/memories")
+    meets = [c for c in m.cards if re.match(r"\d{4}-\d{2}-\d{2}『", c.title)]
+    assert len(meets) == 93
+    text = "\n".join(c.text for c in meets)
+    # 小隊名照原作寫；筆記裡的英文、音譯寫法與聽錯的曲名不能留下
+    assert "スリーズブーケ" in text and not re.search(r"Cerise|斯里姿|斯莉姿|Mira-Cra|千変万花|幻妖夜行|Aurora Flare", text)
+    assert m.search("蓮ノ大三角 沙知 取名")[0].title == "2025-03-06『見納めの会』"
+    assert m.search("機械先生 關不掉")[0].title.startswith("20")
+    assert m.search("音大 聲樂科")[0].title == "2025-03-27『乙宗 梢、最後のWith×MEETSです』"
 
 
 def test_character_dir_moves_every_default(tmp_path):
