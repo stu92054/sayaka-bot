@@ -86,7 +86,6 @@ def test_bundled_kozue_loads():
 
 @pytest.mark.parametrize("key, name, full, self_word", [
     ("ginko", "吟子", "百生吟子", "自稱「我」"),
-    ("kaho", "花帆", "日野下花帆", "自稱「我」"),
 ])
 def test_bundled_cerise_members_load(key, name, full, self_word):
     """梢、吟子、花帆（2026-11-13 加入）：目前只有 lore 01–03，卡片語音、With×MEETS、歌曲卡還沒做。"""
@@ -233,3 +232,52 @@ def test_bad_character_file_is_rejected(tmp_path, content):
     (tmp_path / "character.toml").write_text(content, encoding="utf-8")
     with pytest.raises(ValueError, match="character.toml"):
         Config.from_env({"CHARACTER_DIR": str(tmp_path)})
+
+
+def test_bundled_kaho_loads():
+    """花帆：lore 01–05、卡片語音、歌曲卡、With×MEETS 回憶卡（2026-11-14）。"""
+    from bot.lore import Lore
+    from bot.persona import Persona
+    from bot.replies import Replies
+
+    d = ROOT / "characters/kaho"
+    c = Config.from_env({"CHARACTER_DIR": str(d)})
+    assert c.bot_display_name == "花帆" and "日野下花帆" in c.bot_aliases
+    assert "自稱「我」" in Persona(c.persona_path).text
+    assert Replies(c.replies_path).warnings == []
+    lore = Lore(c.lore_dir)
+    assert lore.warnings == []
+    assert lore.files == ["共通_01_社團與成員.md", "01_個人設定.md", "02_人物關係.md", "03_重要事件時間線.md",
+                          "04_日常與小事.md", "05_With×MEETS.md"]
+    assert 10_000 < len(lore.text) < 35_000  # 含共通 lore（約 2,400 字）
+    for junk in ("〔", "台本", "百科", "raw_", ".txt", "間章", "中集", "Starsness", "劇場版", "scripts/", "OCR",
+                 "待核對", "待補", "BD 特典", "入場者特典", "蓮ノート", "`"):
+        assert junk not in lore.text, junk
+
+
+def test_bundled_kaho_song_cards():
+    from bot.memories import Memories
+
+    m = Memories(ROOT / "characters/kaho/memories")
+    assert m.warnings == [] and len(m.cards) > 200
+    text = "\n".join(c.text for c in m.cards)
+    # 歌曲卡是以花帆的角度產生的，不能殘留其他角色版的標記
+    assert "花帆有唱" in text and "小鈴有唱" not in text and "沙耶香有唱" not in text
+    assert m.search("花帆 唱過 哪些歌")[0].title == "歌單：花帆唱過的歌（總覽）"
+    assert m.search("フォーチュンムービー")[0].title == "歌曲『フォーチュンムービー』"
+
+
+def test_bundled_kaho_meets_cards():
+    import re
+
+    from bot.memories import Memories
+
+    m = Memories(ROOT / "characters/kaho/memories")
+    meets = [c for c in m.cards if re.match(r"\d{4}-\d{2}-\d{2}『", c.title)]
+    assert len(meets) == 164
+    text = "\n".join(c.text for c in meets)
+    # 妹妹照原作寫「ふたば」「みのり」，瑠璃乃的姓寫「大沢」；聽錯的寫法只留在 aliases.txt
+    assert "ふたば" in text and not re.search(r"雙葉|双葉|實里|美成|大澤|姫芽", text)
+    assert m.search("最後のWith×MEETS")[0].title == "2026-03-28『日野下花帆、最後のWith×MEETSだよ！』"
+    assert m.search("雙胞胎 妹妹 雙黃蛋")[0].title == "2024-04-08『入学1年記念雑談！』"
+    assert m.search("さざなみちゃん 吉他")[0].title == "2026-01-19『かほとるりでおしゃべり配信！』"
